@@ -1,0 +1,9 @@
+For v1.2:
+
+*  More intelligent sequencing primer design - search for primers around the midpoint between minimum and maximum distances, and then gradually move out
+
+*  Automated design of overlapping BAC primer sets, including automatic BAC retrieval and repeat masking
+
+*  Ability to detect and ignore repeat masked sequences
+
+*  More complex primer-dimer routines - including detection of hair-pins and unequal primer-dimer internal loops

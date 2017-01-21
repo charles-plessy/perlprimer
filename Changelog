@@ -1,0 +1,137 @@
+16/03/04:	(PerlPrimer-1.1.1)
+		Added the .fasta file type to the Open File dialogue box
+
+15/03/04:	New feature: PerlPrimer can save current parameters as defaults for each PCR tab (Use the Tools menu option "Save default values for this page").  Values are saved to files in the user's home directory, ".perlprimer.[name_of_page]".  (Use the Tools menu option "Restore in-built default values" to delete this file)
+
+11/03/04:	New feature: PerlPrimer can now open FASTA files with range information included in the FASTA header - syntax for the first line is ">Name of DNA sequence 5prime_region[?-?] 3prime_region[?-?] page[?]" where the page argument is optional (defaults to the standard PCR page) and where page 1 = standard PCR, page 2 = bisulphite PCR, etc.  Suggested by Alexander Kozik, for use by Contig Viewer (http://www.atgc.org/Py_ContigViewer/)
+
+09/03/04:	(PerlPrimer-1.1)
+		Minor code tidying
+
+02/03/04:	New icons for opening and saving DNA sequences
+		BUGFIX: a workaround for a very weird Perl/Tk bug - if the Preferences dialogue was opened and closed twice, PerlPrimer stopped doing floating point arithmetic (?!).
+
+27/02/04:	If multiple genes match the expression used to search the ensembl database, PerlPrimer now displays the complete list and allows the user to choose any of the descriptions (or to cancel and refine the search)
+		Primer-dimer routines revised again - previous method was not considering that initial/terminal mismatches will not contribute to dimer instability and thus should not be included when calculating dG values
+		New feature: Users can select the temperature at which to calculate primer-dimer dG in the preferences
+		Default MRU file list is now 8 files
+
+23/02/04:	New feature: Users can disable repeat/run checking in the Preferences window
+		Completed abstraction of the add_cloning subroutine
+		BUGFIX: Preference writing routine now saves the MRU file list when closing preferences dialogue (previously the MRU file list was lost if the preferences were changed and then PerlPrimer was killed)
+		Several minor bug fixes
+		General code tidying
+		
+18/02/04:	New feature: "Find primers for cloning" menu option (in the tools menu) - only available in standard PCR mode, reduces the 5' outer range by 10 bp increments and the 3' inner range by 10 bp increments until primers are found
+		Renamed "Auto +", "Auto -" buttons to "Find outwards" and "Find inwards"
+
+05/02/04:	New feature: "Add cloning sequences" dialogue.  PerlPrimer now uses the GCG restriction enzyme database file from REBASE to list the non-cutting restriction enzymes within a sequence when in Standard PCR mode.  To use, select "Add cloning sequences" from the Tools menu.  (note: the file 'gcg.###' - included with the distribution - will need to be installed in either your home directory or in the same directory as PerlPrimer for this to work)
+		Minor bug fixes
+
+02/02/04:	(PerlPrimer-1.0.2)
+		Added a Recently Opened Files menu (number of files is customisable through the preferences)
+		Added bindings for left and right arrow keys when focussed in the primer lists - allows the user to quickly switch to the primer-dimer tab (with the right arrow key) and back again (with the left arrow key).  Note that up and down arrow keys will still move through the primer list as before
+		PerlPrimer now deletes the dna and mrna temporary files required by Spidey after use
+		The %GC above and below which to exclude primers automatically can now be set in the preferences (before it was between 40% and 60%)
+		Several cosmetic changes:
+			- look-and-feel of menubar and toolbar is now OS dependent
+			- fonts are consistent across all widgets (exception under windows is the HList font - set to be verdana at one point less than the user assigned font size)
+			- most fonts may be overridden by system defaults if desired
+			- the notebook widget on Win32 now has shaded inactive tabs
+			- minor interface tidying
+		If sequencing primers cannot be found within the specified read length between primers, a dialogue is now displayed and the run is aborted (previously, the program would find the next best primer, which could be at a distance much greater than that specified)
+		Slight modifications to the preference reading/writing routines to allow array data to be saved (needed for the recently used files list)
+		Open and Save file functions now list the percentage opened/saved on the status line
+		The dG hash for calculating primer-dimer stability is now calculated from the current salt conditions and the enthalpy and entropy hashes - meaning that primer-dimer calculations are much more accurate. (note that if changing salt concentrations in the preferences, OK needs to be pressed before the hash is recalculated)
+		Reworked menus in the new (and more correct) Perl/Tk format
+		Re-ordering of File menu items
+		"Sort primers" popup menu is now a sub-menu
+		Minor bugfixes and code tidying
+		
+23/1/04:	(PerlPrimer-1.0.1)
+		PerlPrimer now uses eval routines to check for all perl modules, and either exits with a useful message or disables some functions if a module is not found.
+		Several minor bugs fixed/general code tidying.
+		
+		NB: Previous public release (1.0) had an older copy of perlprimer (Beta 5) by mistake - please upgrade if using that release as several important bugs have been fixed.
+
+18/12/03:	(PerlPrimer-1.0)
+		BUGFIX: Generate Report (and copy printable) now includes the last line of sequence
+		Minor code tidying
+
+16/12/03:	(PerlPrimer-1.0_Beta_6)
+		Rehashed primer-dimer routine (again!) - routine now only searches for *extensible* 3' primer-dimers when searching for primer pairs, and pd_full now searches for all other primer-dimers (3' and 5').  This equates to approximately a 100% increase in speed when searching for primers, and provides more useful information to the end user.
+		BUGFIX: Generate Report now provides the correct information for amplicon size and primer positions.
+		Partially abstracted the added-cloning-sequence routines to a subroutine (only implemented for the dna_magnify routine as yet)
+
+12/12/03:	BUGFIX: removed a few extraneous bitwise ands that were lying around (caused problems with some Perl distributions) - suggested by Chris Vega
+		BUGFIX: made all Tk calls use a dash for each option key (caused problems on some systems) - suggested by Chris Vega
+
+11/12/03:	(PerlPrimer-1.0_Beta_5)
+
+10/12/03:	BLAST search now has a (semi-fake) elapsed time display while searching (counts 15 seconds per search interval, which should be approximately correct!)
+		BUGFIX: Many minor bugs squashed, including several problems that occured when range values were defined but 0
+		Open sequence will accept and work with multi-lined entries (preventing slowdowns, although ORF finding will still convert to a single lined entry - this needs to be changed)
+		Many other minor changes/tidying
+		Balloon help texts updated for the new options (sequencing page, pref options, etc)
+		
+
+07/12/03:	New feature: Sequencing page (finds primers spaced at a user-defined interval along a sequence)
+		Gui packing system greatly reworked, now uses far less reliance on the grid geometry manager and less frames to achieve layout.  A new subroutine, nr() (=newrow) is used to create new frame rows, and all widgets are packed into the last row created from the left - simpler and easier.  Should also be slight faster when redrawing on old systems.
+		BUGFIX: QPCR tab was not assigned a "File not saved" description, thus not displaying the open file name correctly.
+		Reworked the primer windowing subroutines to now use a two dimensional array to store primer details (slightly faster and much neater)
+		New feature: PerlPrimer no longer defers to capitalised regions by default but uses the ORF/CpG finding algorithms instead (less confusing and more useful)  Defer to capitalised regions is now a preferences option.
+		New feature: PerlPrimer no longer emulates cpgplot behaviour by default, but uses the "correct" algorithm instead.  Emulate cpgplot behaviour is now a preferences option.
+		Dialogues are now unique (for non-static dialogues the old is destroyed before the new one is created);
+		Main window now has a minimum size (= the default packing size when the program is started) to prevent widgets disappearing when the window is resized too small. 
+		General code tidying and far too many small changes to list independantly.
+
+27/11/03:	(perlprimer-1.0_Beta_4)
+		Redesigned Tm and Primer Size widgets, and amplicon size widgets in QPCR tab
+
+26/11/03:	File saving reworked: PerlPrimer now has standard "Save"/"Save as" functionality and behaves as expected
+		Title of program now displays the name of the file being worked on, even if multiple files are open at the same time
+		Default extention of saved sequences and reports is now .txt
+
+25/11/03:	New feature: proxy server support (enter in preferences) - will still use env_proxy if box unchecked
+		File open/save now allows multiple line DNA sequences - prevents slowdown for large genomic sequences used for QPCR
+		Default exclude_ie value is now 7 (was 5, which generates far too many primers for most genes and is not as specific)
+		BUGFIX: intron-exon boundary checking was not quite right with exclude_ie - this is now fixed.
+		
+24/11/03:	(perlprimer-1.0_Beta_3)
+		New feature: retrieve genes from Ensembl - which also will automatically retrieve genomic and cdna sequence for QPCR
+		New QPCR option: minimum intron/exon boundary - sets minimum overlap of primers across intron/exon boundary
+		Minor code tidying/fixes
+		
+20/11/03:	(perlprimer-1.0_Beta_2)
+		BUGFIX: fixed infinite loop that occurred when no primers were found using the "Auto +" button
+		pp_open_file routine now checks that a PerlPrimer file has in fact been selected and prompts if not
+		"Generate Report" now includes Amplicon size and primer position information
+		Minor code tidying
+
+13/11/03:	(perlprimer-1.0_Beta_1)
+		Preferences dialogue now in NoteBook format
+		Preference options for BLAST searching (and associated modification of BLAST subroutine)
+		"Generate Report" now includes modified primers, file name and date
+		pack_gui subroutine now supports BrowseEntry widgets (needed for BLAST preferences)
+		Minor code tidying 
+
+11/11/03:	(perlprimer-0.99.95)
+		BUGFIX: primer Tm was not calculated for lower-case primers
+		get_tm subroutine is now specific for a single primer if only one is entered
+		Minor code changes/tidying
+
+28/10/03:	(perlprimer-0.99.9)
+		"New File" feature added (see new_file subroutine)
+		Changes to dialogue subroutine to allow different dialogue types
+		New button-packing code for toolbars
+		Code tidying (especially GUI packing routines)/bug fixes
+
+26/10/03:	"Generate Report" feature added
+		Toolbar added
+		Magnify button created next to canvas display
+		"New File" feature added to menus, but not yet implemented
+		Several icons added
+		General code tidying
+		"Reset" buttons removed - functionality taken over by "Set from ..." buttons
+		
+24/10/03:	Initial public release (perlprimer-0.99.8)
