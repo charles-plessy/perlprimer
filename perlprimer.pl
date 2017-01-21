@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.8 (9/8/2005)
+# version 1.1.9 (8/9/2005)
 # Copyright © 2003-2005, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.8";
+	$version = "1.1.9";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -4012,7 +4012,7 @@ sub run_spidey {
 		
 	# abort and complain if we don't see the --SPIDEY signature
 	unless (/--SPIDEY/) {
-		dialogue("Error: Cannot run Spidey executable\n(check that $spidey_exec exists?)");
+		dialogue("Error: Cannot run Spidey executable correctly\n(Please check the console for error messages)");
 		sbarprint("\nCancelled - Spidey executable not found");
 		$cancel=1;
 		return;
@@ -4799,7 +4799,7 @@ sub fetch_ensembl {
 sub convert_ensembl {
 	# argument to http address converter
 	my ($ensembl_organism,$transcript,$ensembl_type) = @_;
-	my $address = "http://www.ensembl.org/$ensembl_organism/exportview?seq_region_name=&type1=transcript&anchor1=$transcript&type2=bp&anchor2=&downstream=&upstream=&format=fasta&action=export&_format=Text&option=$ensembl_type&output=txt&submit=Continue+%3E%3E";
+	my $address = "http://www.ensembl.org/$ensembl_organism/exportview?seq_region_name=&type1=transcript&anchor1=$transcript&type2=bp&anchor2=&downstream=&upstream=&format=fasta&action=export&_format=Text&options=$ensembl_type&output=txt";
 	return $address;
 }
 
@@ -4814,6 +4814,7 @@ sub http_get {
 	# I'd love to fork this and stop the GUI blocking here - but I cannot find
 	# an effective way to do this ... :(
 	my ($address, $method) = @_;
+	# print "$address\n";
 	my $ua = LWP::UserAgent->new();
 	
 	# timeout - default value of 180 seconds is too long
@@ -4843,6 +4844,7 @@ sub http_get {
 	
 	$top->update;
 	my $http = $response->content;
+	# print "http:$http\n";
 	
 	return $http;
 }
