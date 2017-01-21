@@ -3,9 +3,8 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.19 (17 Mar 2010) 
-# (the I'm-fixing-my-software-instead-of-drinking-with-my-mates-at-St-Patrick's-Day release)
-# Copyright © 2003-2010, Owen Marshall
+# version 1.1.20 (17 Feb 2011) 
+# Copyright © 2003-2011, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -30,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.19";
+	$version = "1.1.20";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -40,7 +39,7 @@ BEGIN {
 PerlPrimer v$version
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-Copyright © 2003-2010 Owen Marshall\n
+Copyright © 2003-2011 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
@@ -50,7 +49,7 @@ EOT
 	if ($win_exe) {
 		print <<EOT;
 PerlPrimer v$version 
-Copyright © 2003-2010 Owen Marshall
+Copyright © 2003-2011 Owen Marshall
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
 This window is required for PerlPrimer to run - 
@@ -88,7 +87,7 @@ BEGIN {
 			
 			# Print warning header if not already printed
 			unless ($warning) {
-				print "PerlPrimer v$version\nCopyright © 2003-2010 Owen Marshall\n\n";
+				print "PerlPrimer v$version\nCopyright © 2003-2011 Owen Marshall\n\n";
 				$warning = 1;
 			}
 			
@@ -3017,7 +3016,7 @@ sub tm {
 	# Salt corrected Tm
 	# NB - for PCR I'm assuming for the moment that the [strand target] << [oligo]
 	# and that therefore the C(t) correction term approx equals [oligo]
-	my $corrected_tm=(($deltaH * 1000) / ($deltaS + (1.987 * log($oligo_conc_mols)))) - 273.15;
+	my $corrected_tm=(($deltaH * 1000) / ($deltaS + (1.987 * log($oligo_conc_mols/4)))) - 273.15;
 	return ($corrected_tm, $deltaH, $deltaS);
 }
 
@@ -4762,25 +4761,16 @@ sub fetch_ensembl {
 	}
 	
 	# Search for the gene:
-	
-	# As of 03/2006, Ensembl now uses "searchview" rather than "textview", and the
-	# species delimiter is important; searchview does not seem to have a species argument
-	
-	# As of 04/2006, Ensembl uses "textview" again.  Various unprintable expletives come
-	# mind at this point, all directed towards the developers of the Ensembl web structure ...
-	
-	# ... and as of 06/2006, Ensembl is back to "searchview"!  Worse, textview works (thereby removing
-	# my supposedly failsafe error message) but returns no matches.  Sheesh ...
-	# $_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
-	
-	# New search method as of v1.1.18
-	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
+	# New search method as of v1.1.18 (modified in 1.1.20)
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Lucene/Details?species=$ensembl_organism;idx=Gene;end=2;q=$ensembl_gene");
+	#$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
 	#print "http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene\n";
 		
 	s/<\/*span.*?>//g; # rip out highlight spans
 	s/<\/*font.*?>//g; # rip out font spans
 	
-	#print "$_\n\n";
+	# Print the HTML output for debugging:
+	# print "$_\n\n";
 							
 	# find the Ensembl gene ID, and count the number - if there's more than one
 	# we'll have to ask the user to be more specific
@@ -4796,49 +4786,29 @@ sub fetch_ensembl {
 	# So we need a new http call to get the page we really want, and we'll need to prompt the
 	# if there's more than one match here ...
 	
-	# Find genes and gene_ids
-	while (m/\<a href="(.*?)"\>[\w_]+ ([\w_]+) Gene: ([\w\d\.\-]+) \(.*?: ([\w\d\.\-]+)\)/mg) {
-		my ($href, $gene_type, $gene_id, $name) = ($1, $2, $3, $4);
-		#print "($href, $gene_type, $gene_id, $name)\n\n";
+	#~ # Find genes and gene_ids
+	#~ while (m/\<a href="(.*?)"\>[\w_]+ ([\w_]+) Gene: ([\w\d\.\-]+) \(.*?: ([\w\d\.\-]+)\)/mg) {
+		#~ my ($href, $gene_type, $gene_id, $name) = ($1, $2, $3, $4);
+		#~ #print "($href, $gene_type, $gene_id, $name)\n\n";
 		
+		#~ $name ||= "$gene_id: no description available";
+		#~ push @gene_names, $name;
+		#~ $ids{$name}=[$gene_id, $href];
+	#~ }
+	
+	# As of 02/2011, Ensembl has changed formats again, leading to a slightly different parsing ...
+	
+	# Find genes and gene_ids
+	while (m/\<div class=\"hit\"\>.*?href=\"(.*?)\".*?strong\>(.*?)\W*\<.*?\[(.*?): (.*?) ].*?Description.*?td\>\W*(.*?)\W*\</sg) {
+		my ($href, $name, $gene_type, $gene_id, $gene_des) = ($1, $2, $3, $4, $5);
+		#print "($href, $gene_type, $gene_id, $name, $gene_des)\n\n";
+		$name .= " -- $gene_des";
 		$name ||= "$gene_id: no description available";
 		push @gene_names, $name;
 		$ids{$name}=[$gene_id, $href];
 	}
-		
-	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
-	# Here, we scrape both genes and associated transcripts from the server:
-#	while (m/Ensembl ([\w_].*?) gene ([\w\d\.]+) .*?:(.*?),\sassoc.*?<br \/>(.*?)<br \/>/mg) {
-#		my ($gene_id, $transcripts, $name) = ($2, $3, $4);
-#		
-#		# Parse transcripts
-#		my @enst;		
-#		# This fix should work for all Ensembl organisms (4 Oct 2008)
-#		while ($transcripts =~ m/([\w\d\.]+)/g) {
-#			push @enst, $1;
-#		}
-#		
-#		### Old hacks for grabbing the Ensemble transcripts
-#		# while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
-#			# push @enst, $1;
-#		# }
-#		# # A hack - Drosophila uses different transcript definitions ...
-#		# while ($transcripts =~ m/(CG\d+-RA)/g) {
-#			# push @enst, $1;
-#		# }
-#		# # And different again for Anopheles
-#		# while ($transcripts =~ m/(AGAP\d+-RA)/g) {
-#			# push @enst, $1;
-#		# }
-#		
-#		# Parse gene name
-#		$name ||= "$gene_id: no description available";
-#		$name =~ s/\<.*?\>//g;
-#		push @gene_names, $name;
-#		$ids{$name}=[$gene_id, @enst];
-#	}
 	
-	# No need to sort -- genes are listed in order of relevance (I think)
+	# No need to sort -- genes are listed in order of relevance
 	#@gene_names = sort(@gene_names);
 	
 	if (@gene_names) {
@@ -4872,7 +4842,7 @@ sub fetch_ensembl {
 	}
 	
 	# Having selected the gene, we can now get the transcripts ...
-	if ($ids{$name}[1]) {
+	if ($name && ($ids{$name}[1])) {
 		 $_ = http_get("http://www.ensembl.org/$ids{$name}[1]");
 		 #print "$_\n";
 		 my ($transcripts) = m/id="transcripts"(.*?)\/table/sg;
@@ -4916,7 +4886,7 @@ sub fetch_ensembl {
 			pack_gui('Button', 'View transcripts', 'ensembl_view_transcripts', sub {
 					my $command = "\"$browser\" http://www.ensembl.org/$ensembl_organism/geneview?gene=$gene_id";
 					if ($os eq 'win') {
-						system "start $command";
+						system "$command &";
 					} else {
 						system "$command &";
 					}
@@ -4931,17 +4901,17 @@ sub fetch_ensembl {
 			return if $cancel;
 		}
 	}
-	($transcript) = ($transcript =~ m/([\w\d\.\-]+)/);
+	($transcript) = ($transcript =~ m/([\w\d\.\-]+)/) if $transcript;
 	
 	unless ($gene_id) {
 		# no matches
-		if (/Your query matched no entries/si) {
-			dialogue("Your query matched no entries in the search database");
+		if (/did not match any records in the database/si) {
+			dialogue("Your query did not match any records in the database. Please make sure all terms are spelled correctly.");
 		} elsif ($_ eq " ") {
 			# returned if response->is_error below
 			return;
 		} else {
-			dialogue("Error: Unable to find gene_id in response from server.\n\nThis probably means that the Ensembl server has changed formats - please report this in an email to owenjm\@users.sf.net or submit a bug report at http://perlprimer.sf.net ...\n\nThanks!");
+			dialogue("Error: Unable to find gene_id in response from server.\n\nIf this problem persists, it probably means that Ensembl has changed formats - please report this in an email to owenjm\@users.sf.net or submit a bug report at http://perlprimer.sf.net ...\n\nThanks!");
 			# print "output was\n$_\n";
 		}
 		
@@ -5399,7 +5369,7 @@ sub info {
 	
 	my $text = <<EOT;
 PerlPrimer v$version
-Copyright © 2003-2010 Owen Marshall\n
+Copyright © 2003-2011 Owen Marshall\n
 EOT
 	my $text2 = <<EOT;
 An application to design primers for PCR, Bisulphite PCR, Real-time PCR and Sequencing.
