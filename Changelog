@@ -1,3 +1,6 @@
+17/3/10  (PerlPrimer-1.1.19)
+- Fixed Ensembl compatibility again (Ensembl search now lists the genes first, without transcript info)
+
 9/10/09  (PerlPrimer-1.1.18)
 - Fixed Ensembl compatibility
 - Added many more Ensembl genomes to the dropdown list

@@ -3,8 +3,9 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.18 (9 Oct 2009)
-# Copyright © 2003-2009, Owen Marshall
+# version 1.1.19 (17 Mar 2010) 
+# (the I'm-fixing-my-software-instead-of-drinking-with-my-mates-at-St-Patrick's-Day release)
+# Copyright © 2003-2010, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +30,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.18";
+	$version = "1.1.19";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -39,7 +40,7 @@ BEGIN {
 PerlPrimer v$version
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-Copyright © 2003-2009 Owen Marshall\n
+Copyright © 2003-2010 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
@@ -49,7 +50,7 @@ EOT
 	if ($win_exe) {
 		print <<EOT;
 PerlPrimer v$version 
-Copyright © 2003-2009 Owen Marshall
+Copyright © 2003-2010 Owen Marshall
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
 This window is required for PerlPrimer to run - 
@@ -87,7 +88,7 @@ BEGIN {
 			
 			# Print warning header if not already printed
 			unless ($warning) {
-				print "PerlPrimer v$version\nCopyright © 2003-2009 Owen Marshall\n\n";
+				print "PerlPrimer v$version\nCopyright © 2003-2010 Owen Marshall\n\n";
 				$warning = 1;
 			}
 			
@@ -4771,53 +4772,74 @@ sub fetch_ensembl {
 	# ... and as of 06/2006, Ensembl is back to "searchview"!  Worse, textview works (thereby removing
 	# my supposedly failsafe error message) but returns no matches.  Sheesh ...
 	# $_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
+	
+	# New search method as of v1.1.18
 	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
 	#print "http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene\n";
-	#print "$_\n\n";
 		
 	s/<\/*span.*?>//g; # rip out highlight spans
 	s/<\/*font.*?>//g; # rip out font spans
-						
+	
+	#print "$_\n\n";
+							
 	# find the Ensembl gene ID, and count the number - if there's more than one
 	# we'll have to ask the user to be more specific
 	my $gene_id;
 	my @gene_names;
 	my $name;
 	my %ids;
+	my @enst;
+	my %trans;
+	my @enst_readable;
+	
+	# As of 03/2010, Ensembl now returns the matching genes first, without listing transcripts
+	# So we need a new http call to get the page we really want, and we'll need to prompt the
+	# if there's more than one match here ...
+	
+	# Find genes and gene_ids
+	while (m/\<a href="(.*?)"\>[\w_]+ ([\w_]+) Gene: ([\w\d\.\-]+) \(.*?: ([\w\d\.\-]+)\)/mg) {
+		my ($href, $gene_type, $gene_id, $name) = ($1, $2, $3, $4);
+		#print "($href, $gene_type, $gene_id, $name)\n\n";
+		
+		$name ||= "$gene_id: no description available";
+		push @gene_names, $name;
+		$ids{$name}=[$gene_id, $href];
+	}
 		
 	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
 	# Here, we scrape both genes and associated transcripts from the server:
-	while (m/Ensembl ([\w_].*?) gene ([\w\d\.]+) .*?:(.*?),\sassoc.*?<br \/>(.*?)<br \/>/mg) {
-		my ($gene_id, $transcripts, $name) = ($2, $3, $4);
-		
-		# Parse transcripts
-		my @enst;		
-		# This fix should work for all Ensembl organisms (4 Oct 2008)
-		while ($transcripts =~ m/([\w\d\.]+)/g) {
-			push @enst, $1;
-		}
-		
-		### Old hacks for grabbing the Ensemble transcripts
-		# while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
-			# push @enst, $1;
-		# }
-		# # A hack - Drosophila uses different transcript definitions ...
-		# while ($transcripts =~ m/(CG\d+-RA)/g) {
-			# push @enst, $1;
-		# }
-		# # And different again for Anopheles
-		# while ($transcripts =~ m/(AGAP\d+-RA)/g) {
-			# push @enst, $1;
-		# }
-		
-		# Parse gene name
-		$name ||= "$gene_id: no description available";
-		$name =~ s/\<.*?\>//g;
-		push @gene_names, $name;
-		$ids{$name}=[$gene_id, @enst];
-	}
+#	while (m/Ensembl ([\w_].*?) gene ([\w\d\.]+) .*?:(.*?),\sassoc.*?<br \/>(.*?)<br \/>/mg) {
+#		my ($gene_id, $transcripts, $name) = ($2, $3, $4);
+#		
+#		# Parse transcripts
+#		my @enst;		
+#		# This fix should work for all Ensembl organisms (4 Oct 2008)
+#		while ($transcripts =~ m/([\w\d\.]+)/g) {
+#			push @enst, $1;
+#		}
+#		
+#		### Old hacks for grabbing the Ensemble transcripts
+#		# while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
+#			# push @enst, $1;
+#		# }
+#		# # A hack - Drosophila uses different transcript definitions ...
+#		# while ($transcripts =~ m/(CG\d+-RA)/g) {
+#			# push @enst, $1;
+#		# }
+#		# # And different again for Anopheles
+#		# while ($transcripts =~ m/(AGAP\d+-RA)/g) {
+#			# push @enst, $1;
+#		# }
+#		
+#		# Parse gene name
+#		$name ||= "$gene_id: no description available";
+#		$name =~ s/\<.*?\>//g;
+#		push @gene_names, $name;
+#		$ids{$name}=[$gene_id, @enst];
+#	}
 	
-	@gene_names = sort(@gene_names);
+	# No need to sort -- genes are listed in order of relevance (I think)
+	#@gene_names = sort(@gene_names);
 	
 	if (@gene_names) {
 		# Ask user to confirm gene identity or pick the gene of interest if multiple matches	
@@ -4849,19 +4871,38 @@ sub fetch_ensembl {
 		return if $cancel;
 	}
 	
+	# Having selected the gene, we can now get the transcripts ...
+	if ($ids{$name}[1]) {
+		 $_ = http_get("http://www.ensembl.org/$ids{$name}[1]");
+		 #print "$_\n";
+		 my ($transcripts) = m/id="transcripts"(.*?)\/table/sg;
+		 while ($transcripts =~ m/\/Summary\?.*?t=([\w\d\.]+).*?<td>.*?<td>.*?<td>([\d\-]+).*?<td>.*?>([\w\s]+)</sg) {
+			#print "$1 $2 $3\n";
+			push @enst, $1;
+			if ($2 eq '-') {
+				# Processed transcript, not protein coding
+				push @enst_readable, "$1 $3";
+			} else {
+				# Protein coding
+				push @enst_readable, "$1 $3 (size: $2 aa)";
+			}
+			$ids{$1} = [$2, $3];
+		 }
+	}
+		
 	my $transcript;
-	if (%ids) {
-		$transcript = $ids{$name}[1];
-		if ($#{ $ids{$name}} > 1) {
+	if (@enst) {
+		$transcript = $enst[0];
+		if ($#enst > 1) {
 			# multiple transcripts: ask user to select transcript ID
-			my @transcripts = @{ $ids{$name} }[1 .. $#{$ids{$name}}];
+			my @transcripts = @enst;
 			my $ensembl_mt = $top->Toplevel(-title=>"Please select transcipt ...");
 			my $ensembl_mt_f = $ensembl_mt->Frame()->pack(-fill=>'both', -pady=>7);
 			my $ensembl_mt_fb = $ensembl_mt->Frame()->pack(-side=>'bottom', -fill=>'none');
 			nr(\$ensembl_mt_f);		
 				pack_gui('Label', "Ensemble gene $ids{$name}[0] has ".($#transcripts+1)." transcript".($#transcripts > 0 ? 's' : '')." ...", "ensemble_mt_d_note");
 			nr();
-				pack_gui('BrowseEntry', \$transcript, 'ensembl_mt_d_genes', \@transcripts, 20);
+				pack_gui('BrowseEntry', \$transcript, 'ensembl_mt_d_genes', \@enst_readable, 50);
 			
 			my $cancel=1;
 			nr(\$ensembl_mt_fb);
@@ -4890,7 +4931,8 @@ sub fetch_ensembl {
 			return if $cancel;
 		}
 	}
-			
+	($transcript) = ($transcript =~ m/([\w\d\.\-]+)/);
+	
 	unless ($gene_id) {
 		# no matches
 		if (/Your query matched no entries/si) {
@@ -5357,7 +5399,7 @@ sub info {
 	
 	my $text = <<EOT;
 PerlPrimer v$version
-Copyright © 2003-2009 Owen Marshall\n
+Copyright © 2003-2010 Owen Marshall\n
 EOT
 	my $text2 = <<EOT;
 An application to design primers for PCR, Bisulphite PCR, Real-time PCR and Sequencing.
@@ -10473,3 +10515,18 @@ static char * perlprimer_dna_canvas_2_aa_xpm[] = {
 
 end_of_pixmap
 }
+
+
+# And here endeth the incredibly convoluted code ...
+
+# Can I just say that seven years on, I'm amazed at how well this software has 
+# held its own in the primer-design-verse.  PerlPrimer started its life back in 
+# 2003 as a quick project to help a labmate; I never expected it to be useful 
+# for so long.  Many thanks to all who have written to me over the years with 
+# thanks, suggestions and bugfixes; maybe one day I'll finish off the 
+# unequal-loop dimer code ...
+#
+# Cheers and best wishes,
+# Owen
+#
+# (17 March 2010)
