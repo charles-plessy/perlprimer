@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.1 (15/3/2004)
+# version 1.1.2 (29/3/2004)
 # Copyright © 2003-2004, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -30,7 +30,7 @@ no strict 'refs';
 
 my ($version, $commandline);
 BEGIN {
-	$version = "1.1.1";
+	$version = "1.1.2";
 	($commandline) = @ARGV;
 
 	if ($commandline && $commandline =~ /^-[\w-]+/) {
@@ -632,12 +632,17 @@ my $scroll_factor = 2;
 # These variables are the total changes required for nice cross-platform compatibility 
 # (and most of these are cosmetic - strange that the Tk look&feel is not consistent with
 # things such as widget spacing, most notably the checkbuttons)
-my ($HOME, $os, $gui_font_face, $gui_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
-unless ($^O =~ /win/i) {
+my ($HOME, $tmp, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
+unless ($^O =~ /mswin/i) {
 	$HOME = (getpwuid($<))[7].'/';
-	$gui_font_size = 10;
+	$tmp = '/tmp/';
 	$os = 'nix';
 	$gui_font_face = "Helvetica";
+	$gui_font_size = 10;
+	$list_font_face = "Helvetica";
+	$list_font_size = 10;
+	$text_font_face = "Courier";
+	$text_font_size = 10;
 	$menu_relief = 'raised';
 	$button_pady = 2;
 	$button_pack_padx = 0;
@@ -646,9 +651,14 @@ unless ($^O =~ /win/i) {
 	$check_pady = 3;
 } else {
 	$HOME = 'c:\\';
+	$tmp = 'c:\temp\\';
 	$os = 'win';
-	$gui_font_size = 8;
 	$gui_font_face = "MS Sans Serif";
+	$gui_font_size = 8;
+	$list_font_face = "Verdana";
+	$list_font_size = 7;
+	$text_font_face = "Courier";
+	$text_font_size = 8;
 	$menu_relief = 'flat';
 	$button_pady = -2;
 	$button_pack_padx = 2;
@@ -657,19 +667,15 @@ unless ($^O =~ /win/i) {
 	$check_pady = 0;
 }
 
+# print "PerlPrimer v$version\nOperating system is $^O\n\n";
+
 # Win32 only - for button pre-lights
 my $activebackground_color="#ececec";
 
 # Spidey details
-my (%file_pre, %spidey_exec);
-$file_pre{win} = "$HOME";
-$file_pre{nix} = "$HOME";
-$spidey_exec{win} = 'Spidey.exe';
-$spidey_exec{nix} = 'spidey.linux';
+my (%spidey_exec);
+my $file_pre = "$HOME";
 
-my $file_pre = $file_pre{$os};
-my $spidey_exec = $file_pre.$spidey_exec{$os};		
-my $spidey_command = $spidey_exec." -i ".$file_pre.".dna_tmp -m ".$file_pre.".mrna_tmp ";
 my $spidey_out;
 
 # More global variables
@@ -729,6 +735,12 @@ my $file_types = [
 	['Fasta Files', '.fasta'],
 	['All Files', '*']
 	];
+
+my $file_types_dna = [
+	['Fasta Files', '.fasta'],
+	['All Files', '*']
+	];
+
 
 # Open file hash (for writing reports)
 my %open_file;
@@ -830,7 +842,7 @@ my %arrays = (
 # Hash for opening/saving prefs
 my %pref_variables = (
 	home => \$HOME,
-	spidey_path => \$file_pre{$os},
+	spidey_path => \$file_pre,
 	repeats => \$repeat,
 	runs => \$run,
 	exclude_rr => \$exclude_rr,
@@ -853,6 +865,10 @@ my %pref_variables = (
 	blast_expect => \$blast_expect,
 	gui_font_face => \$gui_font_face,
 	gui_font_size => \$gui_font_size,
+	list_font_face => \$list_font_face,
+	list_font_size => \$list_font_size,
+	text_font_face => \$text_font_face,
+	text_font_size => \$text_font_size,
 	font_override => \$font_override,
 	scroll_factor => \$scroll_factor,
 	ensembl_organism => \$ensembl_organism,
@@ -1032,6 +1048,8 @@ my %balloonmsg = (
 	'prefs_cpgplot_method', "Emulate the behaviour of the program cpgplot when\nfinding CpG islands (please note that this will cause the \%GC and O/E\nto be an overestimate - see the documentation for details)",
 	'prefs_gui_override', "Use system default fonts for most widgets\n(requires program restart)",
 	'prefs_gui_family', "Changes will not take effect until program restart",
+	'prefs_gui_list_family', "Changes will not take effect until program restart",
+	'prefs_gui_text_family', "Please use a fixed-width font\nChanges will not take effect until program restart",
 	'prefs_simple_sites', "Limit restriction enzyme database to 6-base cutting enzymes\n(Also excludes degenerate cutting enzymes)",
 	'prefs_exclude_found_sites', "When displaying the list of restriction enzymes,\nonly list those that will not cut the input sequence\n(Highly recommended!)",
 	
@@ -1083,27 +1101,29 @@ load_icon_data();
 
 my $top = MainWindow->new(-title=>"PerlPrimer v$version");
 $top->withdraw();
+	
+# configure fonts
+my $gui_font = "{$gui_font_face} $gui_font_size";
+my $font = $gui_font;
+my $gui_font_bold = $gui_font . ' bold';
+my $text_font = "{$text_font_face} $text_font_size";
+my $list_font = "{$list_font_face} $list_font_size";
+
+unless ($font_override) {
+	$top->optionAdd("*font", $gui_font);
+	$top->optionAdd("*ROText.font", $text_font);
+	$top->optionAdd("*Text.font", $text_font);
+	$top->optionAdd("*HList.font", $list_font);
+}
 
 #--------------#
 # Balloon help #
 #--------------#
 
 # Set the balloon background colour (nobody actually *likes* the default sick yellow
-# colour, do they??) and the font if we're using Win32
+# colour, do they??)
 $top->optionAdd("*Balloon.Background", "#ececec");
-		
-# configure fonts
-my $gui_font = "{$gui_font_face} $gui_font_size";
-my $font = $gui_font;
-my $gui_font_bold = $gui_font . ' bold';
-my $text_font = "Courier $gui_font_size";
-unless ($font_override) {
-	$top->optionAdd("*font", $gui_font);
-	$top->optionAdd("*ROText.font", $text_font);
-	$top->optionAdd("*Text.font", $text_font);
-	$top->optionAdd("*HList.font", "{Verdana} ".($gui_font_size-1)) if $os eq 'win';
-}
-		
+			
 my $Balloon = $top->Balloon();
 $Balloon->configure(-state => 'none') if $balloon_help == 0;
 $Balloon->configure(-state => 'balloon') if $balloon_help == 1;
@@ -1306,7 +1326,7 @@ tie (*SBAR, 'Tk::Text', $status_bar);
 
 # NB: This has really become a complicated GUI - and the performance hit when drawing/
 # resizing is quite noticable on old machines.  I'm not too sure of a way around this, 
-# though, without sacrificing good looks or usability ...
+# though, without sacrificing good $spidey_execlooks or usability ...
 # (Suggestions welcome!!)
 
 # Format is:  
@@ -2089,6 +2109,11 @@ sub pack_button {
 		)->pack(-side=>'left');
 }
 
+# sub read_ipc {
+	# <IPC>;
+	# print "this is perlprimer - I'm reading $_ from the temp file!\n";
+# }
+
 #---------------------#
 # MouseWheel bindings #
 #---------------------#
@@ -2224,7 +2249,9 @@ sub primer_window {
 			next if $i+$primer_win>$dnaseq_len;
 			
 			my $currwindow=substr($primer_seq, $i, $primer_win);
-		
+			
+			next if check_degenerate($currwindow);
+			
 			if ($exclude_gc) {
 				# exclude based on %GC content
 				my $gc=gc($currwindow);
@@ -2259,6 +2286,14 @@ sub primer_window {
 	return @primer_list;
 }
 
+
+sub check_degenerate {
+	$_ = shift;
+	if (/[^ATGC]/i) {
+		dialogue("One of your primer sequences has a degenerate or non-DNA character.  PerlPrimer cannot calculate the Tm of degenerate sequences") if shift;
+		return 1;
+	} 
+}
 
 #---------------------------------#
 #  bisulphite window calculations #
@@ -2315,6 +2350,8 @@ sub bisul_window {
 
 			my $currwindow=substr($primer_seq, $i, $primer_win);
 			
+			next if check_degenerate($currwindow);
+		
 			# Check for %C content
 			next if cc($currwindow) < $bisul_min_c;
 
@@ -2527,6 +2564,7 @@ sub calc_seq_primers {
 		push @primer_pairs, [ $seq, $pos, $len, $tm_f, $pd ];
 		$last_seq = $pos;		
 	}
+	$pd_full = 0;
 	
 	# $pd_extensible = 1;
 	sbarprint("\nFinished ... found ".($#primer_pairs+1)." primer pairs");
@@ -2690,7 +2728,7 @@ sub getseq {
 	# forward				
 	$_ = uc($_[0]);
 	s/[\s|\n]//g;
-	s/[^ACGT]//g;
+	# s/[^ACGTXN]//g;
 	my $dnaseq_f = $_;
 	
 	#reverse						
@@ -2990,7 +3028,9 @@ sub get_tm {
 	$rprimer = uc($rprimer);
 	
 	my ($deltaG, $deltaH, $deltaS);
-	if ($fprimer) {
+	# my $check = check_degenerate($fprimer, 1);
+	# print "fprimer was $fprimer; check was $check\n";
+	if ($fprimer && !check_degenerate($fprimer, 1)) {
 		($fprimer_tm, $deltaH, $deltaS) = tm($fprimer);
 		$fprimer_tm = sprintf("%.2f", $fprimer_tm);
 		
@@ -3003,7 +3043,7 @@ sub get_tm {
 		$fprimer_len = length($fprimer);
 	}
 	
-	if ($rprimer) {
+	if ($rprimer && !check_degenerate($rprimer, 1)) {
 		($rprimer_tm, $deltaH, $deltaS) = tm($rprimer);
 		$rprimer_tm = sprintf("%.2f", $rprimer_tm);
 		
@@ -3026,13 +3066,13 @@ sub get_tm {
 	$prf{dim}->insert('end', "Most stable 3' extensible primer-dimers (at $pd_temperature°C)\n\n", 'blue');
 	
 	my ($pd1, $pd2, $pd3);
-	if ($fprimer) {
+	if ($fprimer && !check_degenerate($fprimer)) {
 		$pd1 = primer_dimer($fprimer,$fprimer);
 		$pos=$rating_hash{$score_sort[0]};
 		$prf{dim}->insert('end', "Forward vs. Forward: $score_sort[0] kcal/mol\n\n", 'black');
 		draw_dimer($fprimer, $fprimer, $pos, \ *DIMER) unless ($score_sort[0]==0);
 		
-		if ($rprimer) {
+		if ($rprimer && !check_degenerate($rprimer)) {
 			$pd2 = primer_dimer($fprimer,$rprimer);
 			$pos=$rating_hash{$score_sort[0]};
 			$prf{dim}->insert('end', "Forward vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
@@ -3040,7 +3080,7 @@ sub get_tm {
 		}
 	}
 	
-	if ($rprimer) {		
+	if ($rprimer && !check_degenerate($rprimer)) {		
 		$pd3 = primer_dimer($rprimer,$rprimer,1);
 		$pos=$rating_hash{$score_sort[0]};
 		$prf{dim}->insert('end', "Reverse vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
@@ -3050,7 +3090,7 @@ sub get_tm {
 	$pd_full = 1;
 	$prf{dim}->insert('end', "\nMore stable non-extensible primer-dimers (at $pd_temperature°C), if any\n\n", 'blue');
 	
-	if ($fprimer) {
+	if ($fprimer && !check_degenerate($fprimer)) {
 		primer_dimer($fprimer,$fprimer);
 		$pos=$rating_hash{$score_sort[0]};
 		if ($score_sort[0]<$pd1) {
@@ -3058,7 +3098,7 @@ sub get_tm {
 			draw_dimer($fprimer, $fprimer, $pos, \ *DIMER);
 		}
 		
-		if ($rprimer) {
+		if ($rprimer && !check_degenerate($rprimer)) {
 			primer_dimer($fprimer,$rprimer);
 			$pos=$rating_hash{$score_sort[0]};
 			if ($score_sort[0]<$pd2) {
@@ -3067,7 +3107,7 @@ sub get_tm {
 			}
 		}
 	}
-	if ($rprimer) {
+	if ($rprimer && !check_degenerate($rprimer)) {
 		primer_dimer($rprimer,$rprimer);
 		$pos=$rating_hash{$score_sort[0]};
 		if ($score_sort[0]<$pd3) {
@@ -3561,6 +3601,26 @@ sub find_re_sites {
 
 
 sub run_spidey {
+	# Find the spidey executable
+	my @spidey_files = glob($file_pre."*pidey.*");
+	@spidey_files = glob($file_pre."*pidey*") unless @spidey_files;
+	
+	my %sizes_names;
+	foreach (@spidey_files) {
+			my $size = (stat($_))[7];
+			$sizes_names{$size}=$_;
+			# print "found $_ - size $size"; 
+	}
+	my $largest = (sort {$b <=> $a} keys %sizes_names)[0];
+	my $spidey_exec = $sizes_names{$largest};
+	
+	# $spidey_exec{win} = 'Spidey.exe';
+	# $spidey_exec{nix} = 'spidey.linux';
+	
+	# my $spidey_exec = $spidey_exec{$os};		
+	my $spidey_command = $spidey_exec." -i ".$file_pre.".dna_tmp -m ".$file_pre.".mrna_tmp ";
+	my $spidey_out;
+
 	my $mrna_seq = $prf{"qmrna_seq"}->get(0.1,"end");
 	my $dna_seq = $prf{"qdna_seq"}->get(0.1,"end");
 	
@@ -4781,6 +4841,8 @@ Warnecke PM, Stirzaker C, Song J, Grunau C, Melki JR, Clark SJ.  Identification 
 EOT
 			
 	my $text_thanks=<<EOT;
+Alf Easton
+Alexander Kozik
 Chris Vega
 Katrina Bell
 Richard Saffery
@@ -4879,7 +4941,7 @@ sub prefs {
 		nr();
 			pack_gui("Home directory", $HOME, "prefs_files_home", \$prf{prefs_gen}, 20);
 		nr();
-			pack_gui("Path to Spidey executable", $file_pre{$os}, "prefs_files_spidey", \$prf{prefs_gen}, 20);
+			pack_gui("Path to Spidey executable", $file_pre, "prefs_files_spidey", \$prf{prefs_gen}, 20);
 		
 		nr('', 7);
 		
@@ -5017,9 +5079,16 @@ sub prefs {
 			$font = $gui_font;
 		nr();	
 			my $font_families = [sort $top->fontFamilies];
-			pack_gui('Font:', \$gui_font_face, 'prefs_gui_family', \$prf{prefs_gui}, 'be', 0, $font_families);
+			pack_gui('Main font:', \$gui_font_face, 'prefs_gui_family', \$prf{prefs_gui}, 'be', 0, $font_families);
 			pack_gui(' Size:', \$gui_font_size, 'prefs_gui_size', \$prf{prefs_gui}, 'be', 1, [(3 .. 32)], 3);
 		nr();
+			pack_gui('List font:', \$list_font_face, 'prefs_gui_list_family', \$prf{prefs_gui}, 'be', 0, $font_families);
+			pack_gui(' Size:', \$list_font_size, 'prefs_gui_list_size', \$prf{prefs_gui}, 'be', 1, [(3 .. 32)], 3);
+		nr();
+			pack_gui('Fixed font:', \$text_font_face, 'prefs_gui_text_family', \$prf{prefs_gui}, 'be', 0, $font_families);
+			pack_gui(' Size:', \$text_font_size, 'prefs_gui_text_size', \$prf{prefs_gui}, 'be', 1, [(3 .. 32)], 3);
+		nr();
+		
 			pack_gui('Use OS font defaults', $font_override, 'prefs_gui_override', \$prf{prefs_gui}, 'c', 0, 1);
 		nr('',7);
 		
@@ -5120,7 +5189,7 @@ sub find_gene {
 
 	s/\>.*\n//g; #remove FASTA formatting if it exists
 	s/[\s|\n]//g; #remove spaces/tabs/new lines
-	s/[^ACGTXN]//ig; #remove any other characters that shouldn't be there
+	# s/[^ACGTXN]//ig; #remove any other characters that shouldn't be there
 	my @array = ();
 	my $prev = 0;
 	my $nb_page = which_nb_page();
@@ -5153,7 +5222,7 @@ sub find_orf {
 	# no gene marked - try to find ORF since user has requested it
 	$_ = lc($_[0]);
 	s/[\s|\n]//g;
-	s/[^ACGTXN]//ig;
+	# s/[^ACGTXN]//ig;
 	my ($seq_ref) = get_variables('seq');
 
 	my @orf=();
@@ -5224,8 +5293,8 @@ sub find_cpg {
 	# two methods: correct and cpgplot emulation
 	$_ = lc($_[0]);
 	s/[\s|\n]//g;
-	s/[^ACGT]//ig;
-
+	# s/[^ACGTXN]//ig;
+	
 	my $seq = $_;
 	my $seq_len = length($seq);
 	my @cpg_island =();
@@ -5268,7 +5337,6 @@ sub find_cpg {
 	# array ...
 	for my $i (0 .. $seq_len-$cpg_window) {
 		$_ = substr($seq, $i, $cpg_window);
-		
 		# calculate O/E
 		my $g = tr/Gg/Gg/;
 		my $c = tr/Cc/Cc/;
@@ -5279,8 +5347,12 @@ sub find_cpg {
 		my $cg = s/cg/cg/ig;
 		
 		# save data
-		$cpg_oe[$i] = $cg/$exp_gc;
 		$cpg_pgc[$i] = gc($_);
+		if ($exp_gc == 0) {
+			$cpg_oe[$i] = 0;
+		} else {
+			$cpg_oe[$i] = $cg/$exp_gc;
+		}
 	}
 	
 	# Calculate the averages and find the islands
@@ -5311,7 +5383,7 @@ sub find_cpg {
 			next;
 		}
 		unless ($cpg_flag==0) {
-			if ($i-$cpg_start < $min_cpg_island) {
+			if ($cpg_real_pos-$cpg_start < $min_cpg_island) {
 				# don't save the island if it's less than the minimum size
 				$cpg_flag=0;
 				$cpg_count=0;
@@ -5337,7 +5409,7 @@ sub find_cpg {
 	my $cpg_pos = 0;
 
 	for my $i (0 .. $#cpg_island) {
-		print "Island No. $i: start $cpg_island[$i][0], length $cpg_island[$i][1]\n";
+		print "Island No. $i: start $cpg_island[$i][0], end $cpg_island[$i][1], length ",$cpg_island[$i][1]-$cpg_island[$i][0],"\n";
 		
 		# Recreate DNA sequence based on ORF
 		my $dna1 = substr($seq, $cpg_pos, $cpg_island[$i][0]-$cpg_pos);
@@ -5976,6 +6048,7 @@ sub pp_file_open {
 	close SEQ;
 	
 	my ($nb_page, $name) = open_file_type($file, @file_data);
+	return unless ($nb_page);
 	
 	# redraw dna
 	draw_dna();
@@ -5984,10 +6057,10 @@ sub pp_file_open {
 	$qpcr_flag = 0;
 	sbarprint("\n$file opened successfully");
 	$file =~ s/\//\\/g if $os eq 'win'; # path bug in Win32 Perl/Tk
-	
+				
 	# since we're taking the name from FASTA files directly ...
 	my $title_filename = ($name ? $name : $file);
-	
+		
 	# my $full_path = $file;
 	# $file =~ s/.*[\/\\]//g;
 	$top->configure(-title=>"PerlPrimer v$version - $title_filename");
@@ -5999,24 +6072,25 @@ sub pp_file_open {
 sub open_file_type {
 	my $file = shift;
 	my @file_data = @_;
-	my ($type, $page, $name);
+	my ($page, $name);
 	foreach (@file_data) {
 		# This loop is in case the first line is blank.
 		# It's probably unnecessary ..
+		next if /^$/;
 		if (/nb = .+/) {
 			# file appears to be a perlprimer file
-			$type = 'ppr';
 			return ($page, $name) = open_ppr($file, @file_data);
 		} elsif (/^\>.+/) {
 			# file appears to be FASTA format
-			$type = 'fasta';
 			return ($page, $name) = open_fasta($file, @file_data);
-		} elsif (/[\w|\d]+/) {
+		} elsif (/[efijlopqz\d]+/i) {
 			# file is unknown format
+			dialogue("File does not appear to be a PerlPrimer file or in FASTA format.\nIf you are trying to open a DNA sequence file, please use the open icon next to the sequence entry field");
 			last;
+		} else {
+			return ($page, $name) = open_fasta($file, @file_data);
 		}
 	}
-	dialogue("File does not appear to be a PerlPrimer file or in FASTA format.\nIf you are trying to open a DNA sequence file,\nplease use the open icon next to the sequence entry field") unless ($type);
 }
 
 sub open_ppr {
@@ -6118,7 +6192,8 @@ sub open_ppr {
 sub open_fasta {
 	my $file = shift;
 	my @file_data = @_;
-	my ($flag, $dna, $name, $range_5a, $range_5b, $range_3a, $range_3b, $page, $nb_page);
+	my ($flag, $dna, $name, $range_5a, $range_5b, $range_3a, $range_3b, $page);
+	my $nb_page = which_nb_page();
 	my ($key, $value, $lines, $open_percent);
 	my $total_lines = @file_data + 1;
 	foreach (@file_data) {
@@ -6126,10 +6201,12 @@ sub open_fasta {
 		sbarprint("\nOpening $file ... $open_percent\%");
 
 		next if /^$/;
-		if ($flag) {
-			$dna .= "$_";
-			next;
-		} elsif (/^\>/) {
+		# if ($flag) {
+			# $dna .= "$_";
+			# next;
+		# } elsif (/^\>/) {
+		if (/^\>/) {
+			next if $flag;
 			($name, $range_5a, $range_5b, $range_3a, $range_3b, $page) = /^\>\s*(.+?)\s*(?:5prime_region\[(\d+)-(\d+)\])?\s*(?:3prime_region\[(\d+)-(\d+)\])?\s*(?:page\[(\d+)\])?\s*$/;
 			$page = 1 unless ($page && $nb_page_ref{$page});
 			$nb_page = $nb_page_ref{$page};
@@ -6150,6 +6227,8 @@ sub open_fasta {
 			}
 			
 			$flag = 1;
+		} else {
+			$dna .= "$_";
 		}
 	}
 	
@@ -6276,23 +6355,9 @@ sub recently_used_files {
 
 sub open_seq {
 	# opens file and writes contents to text widget
-	my $ref = $_[0];
-	my $file = $top->getOpenFile();
+	my $file = $top->getOpenFile(-filetypes=>$file_types_dna);
 	if (defined($file)) {
-		open (SEQ, "<$file") || dialogue("Could not open file: $!");
-		$$ref->delete(0.1,'end');
-		my $seq;
-		while (<SEQ>) {
-			s/^>.*//g; # remove fasta
-			# s/[\n\r]//g; # Remove lines (is this necessary??)
-			s/[\s\t]//g; # remove white space
-			# s/^.*[^AGCTNX].*$//ig; # not sure about this!
-			$seq .= "$_\n";
-		}
-		
-		close (SEQ);
-		$$ref->insert('end',$seq);
-		sbarprint("\n$file opened successfully");
+		pp_file_open($file);
 	}
 }
 

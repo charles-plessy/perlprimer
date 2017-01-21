@@ -1,3 +1,14 @@
+29/03/04:	(PerlPrimer-1.1.2)
+		BUGFIX: After finding sequencing primers, primer-dimer finding routine was not reset to only search for extensible dimers
+		Minor changes to DNA sequence opening routines to make use of the improved FASTA header functions 
+
+24/03/04:	BUGFIX: a simple bug in the CpG island detection algorithm prevented small islands from being reported
+		BUGFIX: PerlPrimer under MacOS X now correctly detects it is running under a unix environment
+		Better routines for finding the Spidey executable on all platforms (perlprimer now uses a *pidey.* glob and picks the largest file from all matches, in case the archive file is present in the same directory)
+		Perlprimer now screens each primer for degenerate/non-DNA symbols and will not calculate Tm if these are present
+
+22/03/04:	All fonts (main gui font, primer list font and fixed font for sequences) can now be specified in the preferences (suggested by Alf Easton)
+
 16/03/04:	(PerlPrimer-1.1.1)
 		Added the .fasta file type to the Open File dialogue box
 
