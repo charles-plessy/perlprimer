@@ -1,3 +1,9 @@
+01/04/05:	(PerlPrimer-1.1.6)
+			BUGFIX: Problems in Tm and dG calculation that prevented program startup when [dNTPs] > [Mg++] - quick fix provided to prevent this by keeping the value of sqrt([Mg++] - [dNTPs]) as 0.  A warning prompt is displayed if this situation is set in the preferences
+			BUGFIX: Oligo concentration in the preferences was incorrectly described as being in mM when it is in fact calculated as nM
+			Acknowledgment of Rebase files provided in the acknowledgements dialogue
+			Tutorial html file from http://perlprimer.sf.net added to distribution package
+
 21/12/04:	(PerlPrimer-1.1.5)
 			Old preferences are automatically copied to the new home directory location when upgrading
 			Win32 executable built with ActivePerl 5.8.6 and PAR 0.86

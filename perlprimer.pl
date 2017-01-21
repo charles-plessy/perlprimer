@@ -3,8 +3,8 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.5 (21/12/2004)
-# Copyright © 2003-2004, Owen Marshall
+# version 1.1.6 (4/2/2005)
+# Copyright © 2003-2005, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,16 +29,16 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.5";
+	$version = "1.1.6";
 	($commandline) = @ARGV;
-	$win_exe = 0;
+	$win_exe = 1;
 	
 	if ($commandline && $commandline =~ /^-[\w-]+/) {
 		print <<EOT;
 PerlPrimer v$version
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-Copyright © 2003-2004 Owen Marshall\n
+Copyright © 2003-2005 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
@@ -48,7 +48,7 @@ EOT
 	if ($win_exe) {
 		print <<EOT;
 PerlPrimer v$version 
-Copyright © 2003-2004 Owen Marshall
+Copyright © 2003-2005 Owen Marshall
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
 This window is required for PerlPrimer to run - 
@@ -86,7 +86,7 @@ BEGIN {
 			
 			# Print warning header if not already printed
 			unless ($warning) {
-				print "PerlPrimer v$version\nCopyright © 2003-2004 Owen Marshall\n\n";
+				print "PerlPrimer v$version\nCopyright © 2003-2005 Owen Marshall\n\n";
 				$warning = 1;
 			}
 			
@@ -2869,8 +2869,15 @@ sub tm {
 	# correct for salt concentration on deltaS #
 	#------------------------------------------#
 	
-	my $na_eq=$monovalent_cation_conc + 120 * sqrt($mg_conc - $dntp_conc);
-	$na_eq /= 1000;
+	# Big problems if [dNTPs] > [Mg++] !!  This is a quick fix ...
+	my $salt_correction;
+	if ($mg_conc > $dntp_conc) {
+		$salt_correction = sqrt($mg_conc - $dntp_conc);
+	} else {
+		$salt_correction = 0;
+	}
+	
+	my $na_eq=($monovalent_cation_conc + 120 * $salt_correction)/1000;
 	
 	# deltaS correction:
 	$deltaS += (0.368 * ($primer_len - 1) * log($na_eq));
@@ -2892,8 +2899,16 @@ sub tm {
 sub recalculate_dG {
 	# because dG = dH - TdS, and dS is dependent on the salt concentration ...
 	my $temperature = shift || $pd_temperature;
-	my $na_eq=$monovalent_cation_conc + 120 * sqrt($mg_conc - $dntp_conc);
-	$na_eq /= 1000;
+	
+	# Big problems if [dNTPs] > [Mg++] !!  This is a quick fix ...
+	my $salt_correction;
+	if ($mg_conc > $dntp_conc) {
+		$salt_correction = sqrt($mg_conc - $dntp_conc);
+	} else {
+		$salt_correction = 0;
+	}
+	
+	my $na_eq=($monovalent_cation_conc + 120 * $salt_correction)/1000;
 	
 	# the length of each NN dimer is 2, therefore the modifier is 1
 	my $entropy_adjust = (0.368 * log($na_eq));
@@ -3488,10 +3503,14 @@ sub blast_primers {
 		for my $i (0 .. $#$blast_summary_ref) {
 			$_ = $$blast_summary_ref[$i];
 			next unless /$search_string/;
-			/^(\w*\|[\w\|\.\d]+)(.*?)(\d+\s+[\d\.\w\-]+\s*$)/;
-			$packed_widgets{'blast_text'}->insert('end', $1);
-			$packed_widgets{'blast_text'}->insert('end', $2, 'blue');
-			$packed_widgets{'blast_text'}->insert('end', $3."\n");
+			if (m/^(\w*\|[\w\|\.\d]+)(.*?)(\d+\s+[\d\.\w\-]+\s*$)/) {
+				$packed_widgets{'blast_text'}->insert('end', $1);
+				$packed_widgets{'blast_text'}->insert('end', $2, 'blue');
+				$packed_widgets{'blast_text'}->insert('end', $3."\n");
+			} else {
+				## Debug only
+				# print "WARNING: failed parsing $_ from BLAST results\n";
+			}
 			
 		}
 		for my $i (0 .. $#$blast_results_1_ref) {
@@ -5079,7 +5098,7 @@ sub info {
 	
 	my $text = <<EOT;
 PerlPrimer v$version
-Copyright © 2003-2004 Owen Marshall\n
+Copyright © 2003-2005 Owen Marshall\n
 EOT
 	my $text2 = <<EOT;
 An application to design primers for PCR, Bisulphite PCR, Real-time PCR and Sequencing.
@@ -5196,6 +5215,13 @@ sub acknowledgements {
 	$packed_widgets{ack_text}->configure(-font=>"$gui_font");
 	$packed_widgets{ack_text}->tagConfigure('bold',
 		-font =>"$gui_font bold");
+	my $text_rebase=<<EOT;
+Restriction enzyme data are provided by the REBASE project (http://rebase.neb.com)
+
+Roberts RJ, Vincze T, Posfai J, Macelis D.  REBASE - restriction enzymes and methylases.  Nucleic Acids Res. 2003; 31:418-20.
+EOT
+
+	
 	my $text_thermo=<<EOT;
 Thermodynamic parameters are based on the following papers:
 
@@ -5232,9 +5258,13 @@ Katrina Bell
 Richard Saffery
 Nick Wong
 Karl Billeter
+Steffen Moeller
 EOT
 	
-	$packed_widgets{ack_text}->insert('0.1', "Thermodynamic parameters\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('0.1', "Restriction enzyme data\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('end', $text_rebase);
+	
+	$packed_widgets{ack_text}->insert('end', "\n\nThermodynamic parameters\n\n", 'bold');
 	$packed_widgets{ack_text}->insert('end', $text_thermo);
 	
 	$packed_widgets{ack_text}->insert('end', "\n\nEntropy corrections\n\n", 'bold');
@@ -5385,7 +5415,7 @@ sub prefs {
 		nr();
 			pack_gui('Label', "Oligos: ");
 			pack_gui('Entry', \$oligo_conc, "prefs_oligo_conc", 5);
-			pack_gui('Label', "mM");
+			pack_gui('Label', "nM");
 		nr();
 			pack_gui('Label', "dNTPs: ");
 			pack_gui('Entry', \$dntp_conc, "prefs_oligo_conc", 5);
@@ -5578,6 +5608,12 @@ sub prefs {
 		
 	nr(\$prefs_fb);				
 	pack_gui('Button', 'OK', 'prefs_ok', sub {
+			# check if [dNTPs] > [Mg++] ...
+			if ($dntp_conc > $mg_conc) {
+				my $answer = dialogue("Setting [dNTPs] > [Mg++] will have unexpected results - Tm calculations may be inaccurate", 'OK', 'Cancel');
+				return if $answer eq 'Cancel';
+			}
+	
 			# if the salt concentration has been changed, we need to recalculate %oligo_dG
 			recalculate_dG();
 			
@@ -5971,6 +6007,8 @@ sub view_intron_exon_structure {
 		$view_ie->destroy;
 	}
 	
+	$cancel=0;
+	
 	# Create dialogue
 	$view_ie = $top->Toplevel(-title=>'Intron/Exon Genomic Structure');
 	my $view_ie_f = $view_ie->Frame()->pack(-expand=>1, -fill=>'both');
@@ -5988,6 +6026,13 @@ sub view_intron_exon_structure {
 	
 	# get spidey output
 	($_) = run_spidey(1);
+	
+	if ($cancel==1) {
+		# cannot find spidey
+		$cancel=0;
+		$view_ie->destroy;
+		return;
+	}
 	
 	# isolate genomic structure
 	my @exon_structure;

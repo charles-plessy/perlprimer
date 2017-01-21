@@ -22,7 +22,7 @@ Perlprimer's current features include the following:
 
 * Calculation of possible primer-dimers
 * Retrieval of genomic or cdna sequences from Ensembl (including both sequences automatically for QPCR)
-* Ability to BLAST search primers using the NCBI server
+* Ability to BLAST search primers using either the NCBI server or a local server
 * Results can be saved or optionally exported in a tab-delimited format that is compatible with most spreadsheet applications.
 * ORF and CpG island detection algorithms
 * Ability to add cloning sequences to primers, automatically adjusted to be in-frame
@@ -31,6 +31,8 @@ Perlprimer's current features include the following:
 Perlprimer calculates primer melting temperature using J. SantaLucia's extensive nearest-neighbour thermodynamic parameters.  To adjust for the salt conditions of the PCR, PerlPrimer uses the empirical formula derived by von Ahsen, et al. (2001) and allows the user to specify the concentration of Mg2+, dNTPs and primers, or use default, standard, PCR conditions. The result is a highly accurate prediction of primer melting temperature, giving rise to a maximum yeild of product when amplified.
 
 Perlprimer is written in Perl and requires Perl/Tk.  In addition, for QPCR functionality perlprimer requires the open-source Spidey executable from NCBI.  The program is designed to be cross-platform and has been tested on both Microsoft Windows and GNU/Linux-based operating systems.  Users have also had success using the program under Mac OS X.
+
+Restriction enzyme data is provided by the REBASE project (http://rebase.neb.com/)
 
 
 2. Installation / Using the program
@@ -60,7 +62,11 @@ and can be installed by following the instructions included in the archive.  Use
 In addition to installing Perl/Tk (and libwww-perl if required), Mac OS X users will generally require OS 10.3 (Panther) or later and an X-server.  (Please note that as I do not have access to a Mac OS X system I cannot guarantee compatibility, although I will try to fix any issues that are reported).
 
 
-Using PerlPrimer should be fairly self-explanatory, with extensive "balloon help" (turned on by default) and a separate help window detailing the operation of the graphical display of the DNA sequence, selection ranges and primers.
+Using PerlPrimer should be fairly self-explanatory, with extensive "balloon help" (turned on by default) and a separate help window detailing the operation of the graphical display of the DNA sequence, selection ranges and primers. A tutorial is provided with this distribution, and is also available at
+
+	http://perlprimer.sourceforge.net/tutorial.html
+
+which covers the most commonly used features of the program.
 
 
 3. Links to external programs
