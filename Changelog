@@ -1,3 +1,8 @@
+31/5/06  (PerlPrimer-1.1.11)
+- Ensembl compatibility restored yet again (Ensembl now apparently back to using a modiefied text view rather than searchview)
+- Better error notification if the Ensembl format changes yet again
+- Fixed a small bug related to finding the GCG restriction enzyme file in the user's home directory
+
 20/3/06  (PerlPrimer-1.1.10)
 - Ensembl compatibility yet again restored
 - Button in Ensembl transcripts dialogue to allow user to open a browser

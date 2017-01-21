@@ -3,8 +3,8 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.10 (21/3/2005)
-# Copyright © 2003-2005, Owen Marshall
+# version 1.1.11 (31/5/2006)
+# Copyright © 2003-2006, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.10";
+	$version = "1.1.11";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -3826,7 +3826,7 @@ sub find_re_sites {
 	$seq = substr($seq, $$max_range_5p, $$max_range_3p-$$max_range_5p) if $seq;
 	
 	# find the rebase file (different versions are released constantly)
-	my @gcg_paths = glob("$HOME"."gcdg.*");
+	my @gcg_paths = glob("$HOME"."gcg.*");
 	print @gcg_paths;
 	unless (@gcg_paths) {
 		# search for the file in the program directory
@@ -4676,8 +4676,14 @@ sub fetch_ensembl {
 	
 	# As of 03/2006, Ensembl now uses "searchview" rather than "textview", and the
 	# species delimiter is important; searchview does not seem to have a species argument
-	$_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?&idx=Gene&q=$ensembl_gene");
 	
+	# As of 04/2006, Ensembl uses "textview" again.  Various unprintable expletives come
+	# mind at this point, all directed towards the developers of the Ensembl web structure ...
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/textview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
+		
+	s/<\/*span.*?>//g; # rip out highlight spans
+	s/<\/*font.*?>//g; # rip out font spans
+						
 	# find the Ensembl gene ID, and count the number - if there's more than one
 	# we'll have to ask the user to be more specific
 	my $gene_id;
@@ -4691,6 +4697,10 @@ sub fetch_ensembl {
 		my ($gene_id, $transcripts, $name) = ($1, $2, $3);
 		my @enst;
 		while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
+			push @enst, $1;
+		}
+		# A hack - Drosophila uses different transcript definitions ...
+		while ($transcripts =~ m/(CG\d+-RA)/g) {
 			push @enst, $1;
 		}
 		$name =~ s/\<.*?\>//g;
@@ -4774,13 +4784,13 @@ sub fetch_ensembl {
 			
 	unless ($gene_id) {
 		# no matches
-		if (/Your query matched no entries/) {
+		if (/Your query found no matches/si) {
 			dialogue("Your query matched no entries in the search database");
 		} elsif ($_ eq " ") {
 			# returned if response->is_error below
 			return;
 		} else {
-			dialogue("Unable to find gene_id in response from server");
+			dialogue("Error: Unable to find gene_id in response from server.\n\nThis probably means that the Ensembl server has changed formats - please report this in an email to owenjm\@users.sf.net or submit a bug report at http://perlprimer.sf.net ...\n\nThanks!");
 			# print "output was\n$_\n";
 		}
 		
