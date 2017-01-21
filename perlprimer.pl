@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.7 (19/5/2005)
+# version 1.1.8 (9/8/2005)
 # Copyright © 2003-2005, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.7";
+	$version = "1.1.8";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -857,8 +857,8 @@ my %balloonmsg = (
 	'gc_clamp', "Require primers to have a 3' GC clamp\n(two of the last three bases G or C)",
 	'primer_seq_5f', "Sequence to add to the 5' end of the forward primer\nPlace an underscore (_) before restriction enzyme site\n\nUse the 'Add cloning sequences' menu option to configure this automatically",
 	'primer_seq_5r', "Sequence to add to the 5' end of the reverse primer\nPlace an underscore (_) before restriction enzyme site\n\nUse the 'Add cloning sequences' menu option to configure this automatically",
-	'primer_seq_5f_frame', "Frame of the restriction enzyme site in the cloning plasmid",
-	'primer_seq_5r_frame', "Frame of the restriction enzyme site in the cloning plasmid",
+	'primer_seq_5f_frame', "Frame of the restriction enzyme site in the cloning plasmid\n0 = in frame\n1 = +1 base\n2 = +2 bases",
+	'primer_seq_5r_frame', "Frame of the restriction enzyme site in the cloning plasmid\n0 = in frame\n1 = +1 base\n2 = +2 bases",
 	'seq', "DNA sequence: right-click for menu with options\nincluding opening and saving files",
 	'res', "Matching primer pairs are displayed here:\nDouble click to see primer-dimers\nRight-click for option menu",
 	'primerbutton', "Find primer pairs",
@@ -3807,7 +3807,7 @@ sub find_re_sites {
 	my $seq = get_seq();
 	my ($max_range_5p, $max_range_3p) 
 		= get_variables(qw(max_range_5p max_range_3p));
-	$seq = substr($seq, $$max_range_5p, $$max_range_3p-$$max_range_5p);
+	$seq = substr($seq, $$max_range_5p, $$max_range_3p-$$max_range_5p) if $seq;
 	
 	# find the rebase file (different versions are released constantly)
 	my @gcg_paths = glob("$HOME"."gcdg.*");
@@ -3979,7 +3979,7 @@ sub run_spidey {
 	my $largest = (sort {$b <=> $a} keys %sizes_names)[0];
 	my $spidey_exec = $sizes_names{$largest};
 	
-	my $spidey_command = "$spidey_exec -i $tmp.dna_tmp -m $tmp.mrna_tmp -p $print_alignment";
+	my $spidey_command = "$spidey_exec -i \"$tmp.dna_tmp\" -m \"$tmp.mrna_tmp\" -p $print_alignment";
 
 	my $mrna_seq = $packed_widgets{"qmrna_seq"}->get(0.1,"end");
 	my $dna_seq = $packed_widgets{"qdna_seq"}->get(0.1,"end");
@@ -4668,26 +4668,31 @@ sub fetch_ensembl {
 	my @gene_names;
 	my $name;
 	my %ids;
-	my $count=0;
-	while (m/Ensembl Gene: \<\/[bB]\>\<[aA].*?\>(.*?)\<.*?\<br \/\>(.*?)\s*\[/mg) {
-		$gene_id = $1;
-		$name = $2;
-		# print "($name, $gene_id)\n";
+	
+	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
+	# Here, we scrape both genes and associated transcripts from the server:
+	while (m/Ensembl gene ([\w\d]+) .*?:(.*?)\<br \/\>(.*?)\]/mg) {
+		my ($gene_id, $transcripts, $name) = ($1, $2, $3);
+		my @enst;
+		while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
+			push @enst, $1;
+		}
 		$name =~ s/\<.*?\>//g;
 		push @gene_names, $name;
-		$ids{$name}=$gene_id;
-		$count++;
+		$ids{$name}=[$gene_id, @enst];
 	}
 	
-	if ($count) {
-		# multiple/ambiguous matches - now displays full gene name regardless
-		@gene_names = sort(@gene_names);
+	@gene_names = sort(@gene_names);
+	
+	if (@gene_names) {
+		# Ask user to confirm gene identity or pick the gene of interest if multiple matches	
 		my $ensembl_mm = $top->Toplevel(-title=>"Select gene of interest ...");
 		my $ensembl_mm_f = $ensembl_mm->Frame()->pack(-fill=>'both', -pady=>7);
 		my $ensembl_mm_fb = $ensembl_mm->Frame()->pack(-side=>'bottom', -fill=>'none');
 		nr(\$ensembl_mm_f);		
-			pack_gui('Label', 'Please select gene of interest:', "ensemble_mm_d_note");
+			pack_gui('Label', "Found ".($#gene_names+1)." matching gene".($#gene_names > 0 ? 's' : '')." ...", "ensemble_mm_d_note");
 		nr();
+		$name = $gene_names[0];
 			pack_gui('BrowseEntry', \$name, 'ensembl_mm_d_genes', \@gene_names, 40);
 		
 		my $cancel=1;
@@ -4695,20 +4700,51 @@ sub fetch_ensembl {
 		pack_gui('Button', 'OK', 'ensembl_ok', sub {
 				$cancel=undef;
 				$ensembl_mm->destroy;
-				$gene_id = $ids{$name};
+				$gene_id = $ids{$name}[0];
 			}, "active");
 		pack_gui('Button', 'Cancel', 'ensembl_cancel', sub {
 				$ensembl_mm->destroy;
 			});
 		
 		$ensembl_mm->Icon(-image => $pixmap);
-		
+	
 		# (we need it to freeze execution at this point, since the user may
 		# wish to cancel and refine their choice)
 		$ensembl_mm->waitWindow;
 		return if $cancel;
 	}
+	
+	my $transcript = $ids{$name}[1];
+	
+	if ($#{ $ids{$name}} > 1) {
+		# multiple transcripts: ask user to select transcript ID
+		my @transcripts = @{ $ids{$name} }[1 .. $#{$ids{$name}}];
+		my $ensembl_mt = $top->Toplevel(-title=>"Please select transcipt ...");
+		my $ensembl_mt_f = $ensembl_mt->Frame()->pack(-fill=>'both', -pady=>7);
+		my $ensembl_mt_fb = $ensembl_mt->Frame()->pack(-side=>'bottom', -fill=>'none');
+		nr(\$ensembl_mt_f);		
+			pack_gui('Label', "Ensemble gene $ids{$name}[0] has ".($#transcripts+1)." transcript".($#transcripts > 0 ? 's' : '')." ...", "ensemble_mt_d_note");
+		nr();
+			pack_gui('BrowseEntry', \$transcript, 'ensembl_mt_d_genes', \@transcripts, 20);
 		
+		my $cancel=1;
+		nr(\$ensembl_mt_fb);
+		pack_gui('Button', 'OK', 'ensembl_ok', sub {
+				$cancel=undef;
+				$ensembl_mt->destroy;
+			}, "active");
+		pack_gui('Button', 'Cancel', 'ensembl_cancel', sub {
+				$ensembl_mt->destroy;
+			});
+		
+		$ensembl_mt->Icon(-image => $pixmap);
+		
+		# (we need it to freeze execution at this point, since the user may
+		# wish to cancel and refine their choice)
+		$ensembl_mt->waitWindow;
+		return if $cancel;
+	}
+			
 	unless ($gene_id) {
 		# no matches
 		if (/Your query found no matches/) {
@@ -4728,11 +4764,11 @@ sub fetch_ensembl {
 	
 	if ($page eq 'qpcr') {
 		# retrieve both gene and transcript sequences - retrieval type is ignored
-		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=genomic&out=text&btnsubmit=Export&embl_format=embl");
+		$_ = http_get(convert_ensembl($ensembl_organism,$transcript,'genomic'));
 		$packed_widgets{qdna_seq}->delete(0.1,"end");
 		$packed_widgets{qdna_seq}->insert(0.1,$_);
 				
-		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=cdna&out=text&btnsubmit=Export&embl_format=embl");
+		$_ = http_get(convert_ensembl($ensembl_organism,$transcript,'cdna'));
 		$packed_widgets{qmrna_seq}->delete(0.1,"end");
 		$packed_widgets{qmrna_seq}->insert(0.1,$_);
 		
@@ -4741,8 +4777,7 @@ sub fetch_ensembl {
 	} else {
 		# retrieve requested sequence
 		my ($seq_ref) = get_variables('seq');
-			
-		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=$ensembl_type&out=text&btnsubmit=Export&embl_format=embl");
+		$_ = http_get(convert_ensembl($ensembl_organism,$transcript,$ensembl_type));
 		$$seq_ref->delete(0.1,"end");
 		$$seq_ref->insert(0.1,$_);
 	}
@@ -4759,6 +4794,13 @@ sub fetch_ensembl {
 	draw_dna();
 	reset_bounds();
 	return;	
+}
+
+sub convert_ensembl {
+	# argument to http address converter
+	my ($ensembl_organism,$transcript,$ensembl_type) = @_;
+	my $address = "http://www.ensembl.org/$ensembl_organism/exportview?seq_region_name=&type1=transcript&anchor1=$transcript&type2=bp&anchor2=&downstream=&upstream=&format=fasta&action=export&_format=Text&option=$ensembl_type&output=txt&submit=Continue+%3E%3E";
+	return $address;
 }
 
 
@@ -6113,7 +6155,7 @@ sub view_intron_exon_structure {
 	my $view_ie_fb = $view_ie->Frame()->pack(-side=>'bottom', -fill=>'none');
 	
 	nr(\$view_ie_f);
-	pack_gui('Canvas', '', 'view_ie_canvas', 0, 0, -width=>600, -height=>$dna_canvas_height+15);
+	pack_gui('Canvas', '', 'view_ie_canvas', 0, 0, -width=>600, -height=>$dna_canvas_height+35);
 	
 	nr(\$view_ie_fb);
 	pack_gui('Button', 'OK', 'view_ie_ok', sub {$view_ie->destroy}, 'active');
@@ -6171,9 +6213,17 @@ sub view_intron_exon_structure {
 		
 		my $canvas_text = ($canvas_i + $canvas_j)/2;
 		# label exon
-		$$canvas->createText($canvas_text, $text_y, -text=>$count);
+		$$canvas->createText($canvas_text, $text_y, -fill=>'midnightblue', -text=>$count);
 		
 		$previous_canvas_j = $canvas_j;
+	}
+	
+	# draw sequence length info
+	for my $i (0 .. 5) {
+		my $base_real = $i * $gen_length / 5;
+		my $base = int($base_real/1000) * 1000;
+		my $canvas_text = $base * $dna_canvas_size + $dna_canvas_offset;
+		$$canvas->createText($canvas_text, $text_y+20,  -justify=>'left', -fill=>'grey30', -text=>int($base/1000) . "kb");
 	}
 }
 		

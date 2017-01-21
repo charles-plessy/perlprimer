@@ -1,4 +1,9 @@
-30/05/05 (Perlprimer-1.1.7)
+9/8/05 (PerlPrimer-1.1.8)
+- Ensembl compatibility is restored, and now allows the user to select the desired transcripts from genes
+- View intron/exon structure now provides a indication of sequence length
+- Minor code tidying
+
+30/05/05 (PerlPrimer-1.1.7)
 - Added "Span Intron/Exon Boundary" option for QPCR - this is selected by default and was the previous default behaviour; however, it is now possible to design primers for sequences without introns (e.g. 18S)
 - Added GC% information for Primer information tab, and adjusted the layout
 - Ensembl genome databases updated (added Canis_familiaris, Gallus_gallus, Pan_troglodytes, Saccharomyces_cerevisiae, Tetraodon_nigroviridis, Xenopus_tropicalis; removed Caenorhabditis_briggsae)
