@@ -1,12 +1,10 @@
 For v1.2
 
-*  IPC with Contig Viewer
-
 *  More intelligent sequencing primer design - search for primers around the midpoint between minimum and maximum distances, and then gradually move out
 
-*  Automated design of overlapping BAC primer sets, including automatic BAC retrieval and repeat masking
-
 *  More complex primer-dimer routines - including detection of hair-pins and unequal primer-dimer internal loops
+
+*  Ability to designate regions with starting/ending coordinates or starting/ending sequence strings, and assign colours and PCR ranges to such regions
 
 
 Post v1.2
@@ -14,3 +12,5 @@ Post v1.2
 *  Methylation specific PCR
 
 *  Ability to use local BLAST server
+
+*  Automated design of overlapping BAC primer sets, including automatic BAC retrieval and repeat masking

@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.2 (29/3/2004)
+# version 1.1.3 (19/4/2004)
 # Copyright © 2003-2004, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -30,7 +30,7 @@ no strict 'refs';
 
 my ($version, $commandline);
 BEGIN {
-	$version = "1.1.2";
+	$version = "1.1.3";
 	($commandline) = @ARGV;
 
 	if ($commandline && $commandline =~ /^-[\w-]+/) {
@@ -87,6 +87,7 @@ use Tk;
 use Benchmark;
 use HTTP::Request;
 use LWP::UserAgent;
+use IO::Socket;
 require Tk::NoteBook;
 require Tk::HList;
 require Tk::ItemStyle;
@@ -95,6 +96,7 @@ require Tk::LabFrame;
 require Tk::ROText;
 require Tk::Balloon;
 require Tk::BrowseEntry;
+require Tk::DirTree;
 	")) {&$eval_sub($_)};
 }
 
@@ -410,6 +412,7 @@ my $pri_win_min_q=20;
 my $pri_win_max_q=24;
 my $min_ampsize_q=100;
 my $max_ampsize_q=300;
+my $ie_overlap=1;
 my $exclude_ie=7;
 
 my $min_tm_seq = 56; # Sequencing
@@ -468,6 +471,7 @@ my %default_variables = (
 		\$max_ampsize_q => $max_ampsize_q,
 		\$exclude_gc => $exclude_gc,
 		\$exclude_clamp => $exclude_clamp,
+		\$ie_overlap => $ie_overlap,
 		\$exclude_ie => $exclude_ie,
 	},
 );
@@ -531,6 +535,7 @@ Rattus_norvegicus
 Danio_rerio
 Fugu_rubripes
 Caenorhabditis_elegans
+Caenorhabditis_briggsae
 Drosophila_melanogaster
 Anopheles_gambiae");
 
@@ -622,6 +627,12 @@ my $cloning_anchor = "GCGCGC";
 my $simple_sites = 1;
 my $exclude_found_sites = 1;
 
+# IPC using TCP sockets (with Contig Viewer)
+my $file_data_overwrite = 1;
+my $ipc_autofind = 0;
+my $tcp_port = 2500;
+my $socket_polling_interval = 1000; # msec
+
 # Mouse wheel
 my $scroll_factor = 2;
 
@@ -632,9 +643,10 @@ my $scroll_factor = 2;
 # These variables are the total changes required for nice cross-platform compatibility 
 # (and most of these are cosmetic - strange that the Tk look&feel is not consistent with
 # things such as widget spacing, most notably the checkbuttons)
-my ($HOME, $tmp, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
+my ($HOME, $dir_sep, $tmp, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
 unless ($^O =~ /mswin/i) {
 	$HOME = (getpwuid($<))[7].'/';
+	$dir_sep = '/';
 	$tmp = '/tmp/';
 	$os = 'nix';
 	$gui_font_face = "Helvetica";
@@ -651,6 +663,7 @@ unless ($^O =~ /mswin/i) {
 	$check_pady = 3;
 } else {
 	$HOME = 'c:\\';
+	$dir_sep = '\\';
 	$tmp = 'c:\temp\\';
 	$os = 'win';
 	$gui_font_face = "MS Sans Serif";
@@ -667,14 +680,16 @@ unless ($^O =~ /mswin/i) {
 	$check_pady = 0;
 }
 
-# print "PerlPrimer v$version\nOperating system is $^O\n\n";
+# directory the program has been run in (for RE enzyme database)
+my $program_directory = $0;
+$program_directory =~ s/([^\\\/]*$)//;
 
 # Win32 only - for button pre-lights
 my $activebackground_color="#ececec";
 
 # Spidey details
 my (%spidey_exec);
-my $file_pre = "$HOME";
+my $spidey_path = "$HOME";
 
 my $spidey_out;
 
@@ -689,7 +704,7 @@ my (
 	
 	$save_seq, $save_seq2,
 	@primer_pairs_pr_s, @primer_pairs_seq_s, @primer_pairs_bs_s, @primer_pairs_q_s, @save_selection,
-	@intron_exon_bounds,
+	@intron_exon_bounds, $ie_limit, $ie_limit_5p, $ie_limit_3p,
 	
 	$primer_seq_5f, $primer_seq_5r, $primer_seq_5f_frame, $primer_seq_5r_frame,
 	$primer_seq_5f_atg, $primer_seq_5r_atg,
@@ -738,6 +753,7 @@ my $file_types = [
 
 my $file_types_dna = [
 	['Fasta Files', '.fasta'],
+	['Text Files', '.txt'],
 	['All Files', '*']
 	];
 
@@ -815,7 +831,11 @@ my %variables = (
 		gc_clamp => \$exclude_clamp,
 		mrna_seq => \$save_seq,
 		dna_seq => \$save_seq2,
+		ie_overlap => \$ie_overlap,
 		exclude_ie => \$exclude_ie,
+		ie_limit => \$ie_limit,
+		ie_limit_5p => \$ie_limit_5p,
+		ie_limit_3p => \$ie_limit_3p,
 	},
 );
 
@@ -842,7 +862,8 @@ my %arrays = (
 # Hash for opening/saving prefs
 my %pref_variables = (
 	home => \$HOME,
-	spidey_path => \$file_pre,
+	tmp => \$tmp,
+	spidey_path => \$spidey_path,
 	repeats => \$repeat,
 	runs => \$run,
 	exclude_rr => \$exclude_rr,
@@ -883,6 +904,9 @@ my %pref_variables = (
 	cloning_anchor_sequence => \$cloning_anchor,
 	pd_temperature => \$pd_temperature,
 	exclude_found_sites => \$exclude_found_sites,
+	file_overwrite => \$file_data_overwrite,
+	ipc_autofind => \$ipc_autofind,
+	tcp_port => \$tcp_port,
 );
 
 my %pref_arrays = (
@@ -1026,7 +1050,11 @@ my %balloonmsg = (
 	'qprimer_cancel', "Cancel the current task",
 	'qprimer_view', "Copy the selected primer pairs to the clipboard\n(format is tab-delimited text)",
 	'qprimer_spidey', "Detailed intron/exon boundary information",
-	'qexclude_ie', "Minimum number of bases that an intron/exon boundary\nmust lie within at least one primer of a primer pair",
+	'qexclude_ie', "Minimum number of bases within a primer that should overlap an intron/exon boundary",
+	'qie_limit', "Limit primer search to this range of exons",
+	'qie_limit_5p', "Leave blank to represent the first exon",
+	'qie_limit_3p', "Leave blank to represent the last exon",
+	'qie_overlap', "Require at least one primer to overlap an intron/exon boundary",
 	
 	'sspacingmin', "Minimum distance between sequencing primers",
 	'sspacingmax', "Maximum distance between sequencing primers",
@@ -1081,10 +1109,11 @@ recalculate_dG();
 
 # Load pixmap icon data
 my (
-	$perlprimer_icon, $icon_open, $icon_save, $icon_clear,
+	$perlprimer_icon, $icon_open, $icon_open_small, $icon_save, $icon_clear,
 	$icon_info, $icon_magnify, $icon_new, $dna_canvas_pixmap,
 	$icon_separator, $icon_prefs, $icon_report, $icon_save_as,
 	$icon_ensembl, $icon_dna_open, $icon_dna_save,
+	$info_pixmap, $error_pixmap,
 );
 load_icon_data();
 
@@ -1172,6 +1201,7 @@ my $menu_file = $menu->cascade(-label => "File", -menuitems => [
 		"-",
 		[command => "Retrieve gene from Ensembl", -command =>\&get_ensembl, -accelerator=>'Ctrl-E' ],
 		"-",
+		[command => "Restart", -command => \&restart, ],
 		[command => "Exit", -command => \&end_prog, -accelerator=>'Ctrl-Q' ]
 		]);		
 		
@@ -1578,13 +1608,18 @@ pack_gui('Amplicon size', '', 'qprimer_amp_l', \$page_qpcrf, 'l');
 	nr(\$prl{qprimer_amp_l});
 		pack_gui('', $min_ampsize_q, 'qminamp', \$prl{qprimer_amp_l}, 5);
 		pack_gui('-', $max_ampsize_q, 'qmaxamp', \$prl{qprimer_amp_l}, 5, 2, '', 'bases');
+	nr();
+		pack_gui('Limit primers to exon(s)', $ie_limit, 'qie_limit', '', 'c', 0, 1);
+		pack_gui('', $ie_limit_5p, 'qie_limit_5p', '',3);
+		pack_gui('-', $ie_limit_3p, 'qie_limit_3p', '', 3); 	
 	
 pack_gui('Options', '', 'qprimer_options_l', \$page_qpcrf, 'l', 1);
 	nr(\$prl{qprimer_options_l}, 0);
 		pack_gui('Exclude %GC', $exclude_gc, 'qexclude_gc', \$prf{qprimer_options_tf}, 'c', 0, 1);
 		pack_gui('GC clamp', $exclude_clamp, 'qgc_clamp', \$prf{qprimer_options_tf}, 'c', 0, 1, 2);
 	nr();
-		pack_gui('Minimum Intron/Exon boundary: ', $exclude_ie, 'qexclude_ie', \$prl{qprimer_options_l}, 3, '', '', 'bases');
+		pack_gui('Overlap intron/exon boundary by', $ie_overlap, 'qie_overlap', '', 'c', 0, 1);
+		pack_gui('', $exclude_ie, 'qexclude_ie', \$prl{qprimer_options_l}, 3, '', '', 'bases');
 
 pack_gui('Genomic sequence', '', 'qdna_seq', \$page_qpcrf, 't', 25, 5, 1, 0, 1, '', '', 1, 1);
 pack_gui('mRNA sequence', '', 'qmrna_seq', \$page_qpcrf, 't', 25, 5, 1, 0, 1, '', 1, 1, 1);
@@ -1692,6 +1727,10 @@ $top->bind($class,'<Control-a>', \&select_all_primers);
 $top->bind($class,'<Control-c>', \&copy_selected_primers);
 $top->bind($class,'<3>', \&menu_popup);
 
+# Socket code for contig viewer
+my ($sock, $sel, $sock_repeat_id);
+setup_sock();
+
 MainLoop();
 
 # Program end
@@ -1726,6 +1765,77 @@ sub exit_program {
 	close (PREFS);
 	exit 0;
 }
+
+
+#----------------#
+# Socket reading #
+#----------------#
+
+sub setup_sock {
+	$sock = IO::Socket::INET->new(
+    		Listen    => SOMAXCONN, 
+    		Reuse     => 1, 
+    		LocalPort => $tcp_port,
+    		Proto     => 'tcp',
+	);
+	
+	if (defined($sock)) {
+		if ($os eq 'win') {
+			# Fileevent with sockets does not work with Win32 -
+			# here we check by manually polling the socket every second
+    			use IO::Select;
+    			$sel = IO::Select->new;
+    			$sel->add($sock);
+    			$sock_repeat_id = $top->repeat($socket_polling_interval => \&read_sock);
+		} else {
+    			$top->fileevent($sock, 'readable' => \&read_sock);
+		}
+	} else {
+		# no socket available
+		print "Could not open socket at port $tcp_port\n";
+	}
+}
+
+sub read_sock {
+	# Read the socket
+    	my $hand = $sock;
+	
+    	if ($os eq 'win') {
+		# direct polling ...
+        	my(@ready) = $sel->can_read(0);
+        	return if $#ready == -1; # Nothing to read ... move along ...
+        	$hand = $ready[0];
+    	}
+	
+	my $new_sock = $hand->accept();
+	
+    	my $numbytes = 2048;							
+    	my $data = "";
+	my $count;
+	my $num = $numbytes;
+	
+    	while ($num==$numbytes) {
+        	my $buf;
+        	$num = sysread $new_sock, $buf, $numbytes;
+		unless (defined($num)) {
+			last;
+		}
+        	$data .= $buf;
+    	}
+	
+	my (@lines) = split("\n", $data);
+	
+	if ($#lines == -1) {
+		# connection has been broken or something has gone wrong
+		return;
+	} else {
+		# Open the socket data as a FASTA file
+		pp_file_open("[data from external application]", @lines);
+		my ($sub) = get_variables(qw(primer_sub));
+		&$sub() if $ipc_autofind;
+	}
+}
+
 
 
 #-------------------------#
@@ -1886,7 +1996,6 @@ sub pack_gui {
 		
 		$prb{"$widget_name"}=($widget_reference ? $$widget_reference : $row_counter[-1])->Button(
 				-text=>"$label",
-				# -font => $font,
 				-padx=>5,
 				-pady=>$button_pady,
 				-command=>\$_[1],
@@ -1915,7 +2024,10 @@ sub pack_gui {
 		my $canvas = \$prf{"$widget_name"};
 		$$canvas->CanvasBind('<B1-Motion>' => sub {items_drag($Tk::event->x, $canvas)});
 		$$canvas->CanvasBind('<B2-Motion>' => sub {amplicon_drag($Tk::event->x, $canvas)});
+		$$canvas->CanvasBind('<1>' => sub {items_drag($Tk::event->x, $canvas)});
+		$$canvas->CanvasBind('<2>' => sub {amplicon_drag($Tk::event->x, $canvas)});
 		$$canvas->CanvasBind('<Control-B1-Motion>' => sub {amplicon_drag($Tk::event->x, $canvas)});
+		$$canvas->CanvasBind('<Control-1>' => sub {amplicon_drag($Tk::event->x, $canvas)});
 		$$canvas->CanvasBind('<3>' => sub {dna_magnify($Tk::event->x)});
 		$$canvas->CanvasBind('<Control-3>', \&draw_dna);
 
@@ -2221,6 +2333,55 @@ sub primer_window {
 		}
 	}
 	
+	# my $i;
+	# foreach (@intron_exon_bounds) {
+		# print $i++," $_\n";
+	# }
+	
+	# print "[$reverse] bounds: $seqbound5 - $seqbound3\n";
+	
+	# QPCR specific (limiting range to specific exons)
+	if ($ie_limit) {
+		unless ($reverse) {
+			if ($ie_limit_5p) {
+				my $limit = $ie_limit_5p-2;
+				if ($limit>=0) {
+					$seqbound5 = $intron_exon_bounds[$limit]-$$pri_win_max;
+				}
+			}
+			if ($ie_limit_3p) {
+				my $limit = $ie_limit_3p-1;
+				$limit = 0 if $limit < 0;
+				if (defined($limit)) {
+					unless ($limit > $#intron_exon_bounds) {
+						$seqbound3 = $intron_exon_bounds[$limit]+$$pri_win_max;
+					}
+				}
+			}	
+		} else {
+			# reverse sequence
+			if ($ie_limit_3p) {
+				#### in progress
+				my $limit = $ie_limit_3p-1;
+				$limit = 0 if $limit < 0;
+				if (defined($limit)) {
+					unless ($limit > $#intron_exon_bounds) {
+						$seqbound5 = $dnaseq_len - ($intron_exon_bounds[$limit]+$$pri_win_max);
+					}
+				}
+			}
+			if ($ie_limit_5p) {
+				my $limit = $ie_limit_5p-2;
+				if ($limit>=0) {
+					$seqbound3 = $dnaseq_len - ($intron_exon_bounds[$limit]-$$pri_win_max);
+				}
+			}
+		}
+	}	
+	
+	# print "[$reverse] bounds: $seqbound5 - $seqbound3\n";
+
+	
 	# the above covers the unlikely possibility that $max_ampsize is set
 	# and $max_range_5p and $max_range_3p are not.  It might be desirable at some
 	# point, and it was the original way of doing things.  It doesn't hurt!
@@ -2466,7 +2627,7 @@ sub calc_amplicon {
 			if ($qpcr_flag == 1) {
 				# Amplicon size check
 				next if ($amp_size < $$min_ampsize || $amp_size > $$max_ampsize);
-
+				
 				#check amp range spans i/e boundary
 				my $qpcr_check=0;
 				foreach my $i (@intron_exon_bounds) {
@@ -2476,11 +2637,13 @@ sub calc_amplicon {
 				
 				#check at least one primer falls across i/e boundary
 				$qpcr_check=0;
-				foreach my $i (@intron_exon_bounds) {
-					$qpcr_check=1 if $pos_f<($i-$exclude_ie) && ($i+$exclude_ie)<($pos_f+$len_f);
-					$qpcr_check=1 if ($realpos_r-$len_r)<($i-$exclude_ie) && ($i+$exclude_ie)<$realpos_r;
+				if (($ie_overlap) && ($exclude_ie)) {
+					foreach my $i (@intron_exon_bounds) {
+						$qpcr_check=1 if $pos_f<($i-$exclude_ie) && ($i+$exclude_ie)<($pos_f+$len_f);
+						$qpcr_check=1 if ($realpos_r-$len_r)<($i-$exclude_ie) && ($i+$exclude_ie)<$realpos_r;
+					}
+					next unless $qpcr_check==1;
 				}
-				next unless $qpcr_check==1;
 			}
                         
 			# all OK up to here, so let's check primer-dimers:
@@ -2710,6 +2873,18 @@ sub cc {
 	$cc = $countc/$counttotal*100;
 	return $cc;
 }
+
+
+#----------------#
+# Clean sequence #
+#----------------#
+
+sub clean_seq {
+	$_ = shift;
+	s/[\s|\n]//g; #remove spaces/new lines
+	s/-//g; #remove gaps in sequence
+	return $_;
+}
 		
 
 #-------------------------------#
@@ -2726,12 +2901,12 @@ sub getseq {
 	}
 
 	# forward				
-	$_ = uc($_[0]);
-	s/[\s|\n]//g;
-	# s/[^ACGTXN]//g;
+	$_ = uc(shift);
+	$_ = clean_seq($_);
+
 	my $dnaseq_f = $_;
 	
-	#reverse						
+	# reverse					
 	my $dnaseq_r_top = reverse($dnaseq_f);
 	my $dnaseq_r = complement($dnaseq_r_top);
 				
@@ -2790,7 +2965,6 @@ sub tm {
 	
 	# deltaS correction:
 	$deltaS += (0.368 * ($primer_len - 1) * log($na_eq));
-	# print "na_eq was $na_eq\nentropy correct was ".(0.368 * ($primer_len - 1) * log($na_eq))."\n";
 	
 	my $oligo_conc_mols = $oligo_conc / 1000000000;
 
@@ -3011,10 +3185,20 @@ sub draw_dimer {
 }	
 
 
+#----------------------#
+# Program exit/restart #
+#----------------------#
+
 sub end_prog {
 	# This sends the program to the pref writing routine after Mainloop() ...
 	$top->destroy;
 }
+
+
+sub restart {
+	exec "$0";
+}
+	
 
 		
 #---------------------#
@@ -3028,6 +3212,8 @@ sub get_tm {
 	$rprimer = uc($rprimer);
 	
 	my ($deltaG, $deltaH, $deltaS);
+	my $oligo_conc_mols = $oligo_conc / 1000000000;
+
 	# my $check = check_degenerate($fprimer, 1);
 	# print "fprimer was $fprimer; check was $check\n";
 	if ($fprimer && !check_degenerate($fprimer, 1)) {
@@ -3145,12 +3331,13 @@ EOT
 	$prf{dim}->see(0.1);
 }
 
+
 sub blast_primers {
 	return if check_packages("HTTP::Request", "LWP::UserAgent");
 	# I've tried to make this the way blast *should* be, with colour output
 	# and the ability to limit the results ... 
 	if (($fprimer eq "") && ($rprimer eq "")) {
-		dialogue("Please enter primers to blast");
+		dialogue("Please enter primers to BLAST");
 		return;
 	}
 	my ($blast_out_f,$blast_out_r)=("Waiting on Blast Server for forward primer results ...","Waiting on Blast Server for reverse primer results ...");
@@ -3208,7 +3395,8 @@ sub blast_primers {
 	# GUI code
 	# destroy old window if one exists (and cancel last blast search ...)
 	if (Exists($blast_d)) {
-		$top->afterCancel($rptid);
+		# $top->afterCancel($rptid);
+		$rptid->cancel;
 		$blast_d->destroy;
 	}	
 		
@@ -3225,13 +3413,14 @@ sub blast_primers {
 	nr(\$blast_d_fb);
 
 	pack_gui("OK", sub{
-			$top->afterCancel($rptid);
+			# $top->afterCancel($rptid);
+			$rptid->cancel;
 			$blast_d->destroy;
 		}, "blast_full", '', "b", "active", 0);
+		
 	pack_gui("Forward", sub {
 			$display='f';
 			&$blast_display;
-			
 		}, "blast_f", '', "b", '', 1, '', '', 'disabled');
 		
 	pack_gui("Reverse", sub {
@@ -3400,15 +3589,7 @@ sub get_qprimers {
 	my $mrna_seq;
 	($spidey_out, $mrna_seq) = run_spidey(1);
 	return if $cancel == 1;
-			
-	@intron_exon_bounds = ();
-	while ($spidey_out =~ /(\d{1,})-(\d{1,}) \(mRNA\)/g) {
-		push (@intron_exon_bounds, $2);
-	}
-	
-	# last boundary is end of mRNA sequence: remove
-	pop @intron_exon_bounds;
-			
+						
 	@PF=@PR=();	
 	my ($gene_5p, $gene_3p)=find_gene($mrna_seq);
 	
@@ -3434,7 +3615,6 @@ sub get_qprimers {
 	sort_primers('10');
 		
 	sbarprint("\nFinished ... found ".($#primer_pairs+1)." primer pairs");	
-	# draw_dna(\$prf{qprimer_canvas},\$prf{mrna_seq});
 	draw_dna();
 	
 	# unset flag
@@ -3458,8 +3638,6 @@ sub find_re_sites {
 	my @gcg_paths = glob("$HOME"."gcg.*");
 	if (@gcg_paths == 0) {
 		# search for the file in the program directory
-		my $program_directory = $0;
-		$program_directory =~ s/([^\\\/]*$)//;
 		@gcg_paths = glob("$program_directory"."gcg.*");
 	}
 	
@@ -3602,23 +3780,24 @@ sub find_re_sites {
 
 sub run_spidey {
 	# Find the spidey executable
-	my @spidey_files = glob($file_pre."*pidey.*");
-	@spidey_files = glob($file_pre."*pidey*") unless @spidey_files;
+	my @spidey_files = glob($spidey_path."*pidey.*");
+	@spidey_files = glob($spidey_path."*pidey*") unless @spidey_files;
+	
+	unless (@spidey_files) {
+		dialogue("Error: cannot find the Spidey executable in $spidey_path\n\nIf this is not the directory where Spidey is located, please specify the correct location in the Preferences");
+		$cancel=1;
+		return;
+	}
 	
 	my %sizes_names;
 	foreach (@spidey_files) {
 			my $size = (stat($_))[7];
 			$sizes_names{$size}=$_;
-			# print "found $_ - size $size"; 
 	}
 	my $largest = (sort {$b <=> $a} keys %sizes_names)[0];
 	my $spidey_exec = $sizes_names{$largest};
 	
-	# $spidey_exec{win} = 'Spidey.exe';
-	# $spidey_exec{nix} = 'spidey.linux';
-	
-	# my $spidey_exec = $spidey_exec{$os};		
-	my $spidey_command = $spidey_exec." -i ".$file_pre.".dna_tmp -m ".$file_pre.".mrna_tmp ";
+	my $spidey_command = $spidey_exec." -i ".$tmp.".dna_tmp -m ".$tmp.".mrna_tmp ";
 	my $spidey_out;
 
 	my $mrna_seq = $prf{"qmrna_seq"}->get(0.1,"end");
@@ -3629,7 +3808,7 @@ sub run_spidey {
 	### Only they're not temporary at present!  Really should delete them at the end ...
 	### or at the very least, save them to a user-definable temp directory (/tmp or c:\tmp)
 	### perhaps run a check on a default temp directory's existence, and otherwise use $HOME
-	unless (open (MRNA, ">".$file_pre.".mrna_tmp")) {
+	unless (open (MRNA, ">".$tmp.".mrna_tmp")) {
 		dialogue("Error: could not write mRNA temp file: $!\n");
 		$cancel=1;
 		return;
@@ -3637,7 +3816,7 @@ sub run_spidey {
 	print MRNA $mrna_seq;
 	close (MRNA);
 	
-	unless (open (DNA, ">".$file_pre.".dna_tmp")) {
+	unless (open (DNA, ">".$tmp.".dna_tmp")) {
 		dialogue("Error: could not write DNA temp file: $!\n");
 		$cancel=1;
 		return;
@@ -3651,7 +3830,7 @@ sub run_spidey {
 	
 	# abort and complain if we don't see the --SPIDEY signature
 	unless (/--SPIDEY/) {
-		dialogue("Cannot run Spidey executable\n(check that $spidey_exec exists?)");
+		dialogue("Error: Cannot run Spidey executable\n(check that $spidey_exec exists?)");
 		sbarprint("\nCancelled - Spidey executable not found");
 		$cancel=1;
 		return;
@@ -3673,8 +3852,20 @@ sub run_spidey {
 	}
 	
 	# delete those tmp files
-	unlink("$file_pre.mrna_tmp") || dialogue("Warning: could not delete temporary file $file_pre.mrna_tmp");
-	unlink("$file_pre.dna_tmp") || dialogue("Warning: could not delete temporary file $file_pre.dna_tmp");
+	unlink("$tmp.mrna_tmp") || dialogue("Error: could not delete temporary file $spidey_path.mrna_tmp");
+	unlink("$tmp.dna_tmp") || dialogue("Error: could not delete temporary file $spidey_path.dna_tmp");
+	
+	sbarprint("\n");
+	
+	# isolate intron/exon boundaries
+	@intron_exon_bounds = ();
+	while (/(\d{1,})-(\d{1,}) \(mRNA\)/g) {
+		push (@intron_exon_bounds, $2);
+	}
+	
+	# last boundary is end of mRNA sequence: remove
+	pop @intron_exon_bounds;
+
 	return ($_, $mrna_seq);
 }
 
@@ -3963,6 +4154,11 @@ sub get_primers_cloning {
 	}
 }
 
+
+#----------#
+# New File #
+#----------#
+
 sub new_file {
 	my $page = which_nb_page();
 	if ($page eq "primer") {
@@ -3975,10 +4171,13 @@ sub new_file {
 	
 	# If there's a sequence present, prompt to make sure the user wants to
 	# lose all changes ...
-	if (defined($seq)) {
-		my $answer = dialogue("Data will be lost!", "OKCancel");
+	if (defined($seq) && $file_data_overwrite) {
+		my $answer = dialogue("Save before closing?", 'Yes', 'No', 'Cancel');
 		if ($answer =~ /cancel/i) {
+			$cancel = 1;
 			return;
+		} elsif ($answer =~ /yes/i) {
+			pp_file_save();
 		}
 	}
 	
@@ -3990,7 +4189,7 @@ sub new_file {
 	# Clear variables
 	foreach my $key (keys %{ $variables{$page}}) {
 		my $pointer = $variables{$page}{$key};
-		if (eval {$$pointer}) {
+		if (eval {defined($$pointer)}) {
 			undef($$pointer);
 			if ($default_variables{$page}{$pointer}) {
 				$$pointer = $default_variables{$page}{$pointer};
@@ -4015,6 +4214,11 @@ sub new_file {
 	$top->configure(-title=>"PerlPrimer v$version");
 	$open_file{$page} = 'File not saved';
 }
+
+
+#-----------------------------------------------#
+# Saving/loading/deleting user-defined defaults #
+#-----------------------------------------------#
 
 sub save_defaults {
 	# Save user-defined default values
@@ -4091,7 +4295,8 @@ sub blast {
 	unless (Exists($blast_d)) {
 		# this routine should not continue running if the user has destroyed
 		# the blast search dialogue.  Hopefully this will stop it!
-		$top->afterCancel($rptid);
+		# $top->afterCancel($rptid);
+		$rptid->cancel;
 		return;
 	}
 	
@@ -4116,9 +4321,10 @@ sub blast {
 	# can't use with ActivePerl for Win32 :(	
 	$flag=undef;
 	$blast_count = 0;
-	$rptid = $blast_d->repeat(15000, \&blast_wait);
+	$rptid = $top->repeat(15000, \&blast_wait);
 	$blast_d->waitVariable(\$flag);
-	$blast_d->afterCancel($rptid);
+	# $blast_d->afterCancel($rptid);
+	$rptid->cancel;
 	
 	# Having asked for text output, blast still provides some HTML formatting!
 	s/\<!\-\-.*\-\-\>//sg;
@@ -4262,14 +4468,10 @@ sub fetch_ensembl {
 		
 		$ensembl_mm->Icon(-image => $pixmap);
 		
-		# this seems a bit messy, but at least it works
 		# (we need it to freeze execution at this point, since the user may
 		# wish to cancel and refine their choice)
 		$ensembl_mm->waitWindow;
 		return if $cancel;
-
-		# dialogue("More than one match found:\n$multiple\nPlease enter a more specific query");
-		# return;
 	}
 		
 	unless ($gene_id) {
@@ -4285,7 +4487,6 @@ sub fetch_ensembl {
 		
 		return;
 	}
-	# print "gene_id was $gene_id\n";
 	
 	if ($page eq 'qpcr') {
 		# retrieve both gene and transcript sequences - retrieval type is ignored
@@ -4296,6 +4497,9 @@ sub fetch_ensembl {
 		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=cdna&out=text&btnsubmit=Export&embl_format=embl");
 		$prf{qmrna_seq}->delete(0.1,"end");
 		$prf{qmrna_seq}->insert(0.1,$_);
+		
+		# Run spidey automatically to show the user the intron/exon boundaries
+		run_spidey(1);
 	} else {
 		# retrieve requested sequence
 		my ($seq_ref) = get_variables('seq');
@@ -4306,8 +4510,10 @@ sub fetch_ensembl {
 	}
 	
 	# update title
-	$top->configure(-title=>"PerlPrimer v$version - $ensembl_gene");
-	$open_file{$page} = $ensembl_gene;
+	my $file_name = "$ensembl_gene"."_($ensembl_organism)";
+	$top->configure(-title=>"PerlPrimer v$version - $file_name");
+	$open_file{$page} = $file_name;
+	sbarprint("\n$ensembl_gene ($ensembl_organism) retrieved sucessfully");
 	
 	# destroy dialogue, draw the sequence
 	$ensembl->destroy;
@@ -4347,13 +4553,12 @@ sub http_get {
 
 	my $response = $ua->request($req);
 	if ($response->is_error) {
-		dialogue("HTTP request unsuccessful");
+		dialogue("Error: HTTP request unsuccessful");
 		return " ";
 	}
 	
 	$top->update;
 	my $http = $response->content;
-	# print "...\n";
 	
 	return $http;
 }
@@ -4662,11 +4867,11 @@ EOT
 		$filename .= "_report";
 		$file = $top->getSaveFile(-defaultextension=>'.txt', -initialfile=>$filename);
 	} else {
-		my $file = $top->getSaveFile(-defaultextension=>'.txt');
+		$file = $top->getSaveFile(-defaultextension=>'.txt');
 	}
 	
 	if (defined($file)) {
-		open (REPORT, ">$file") || dialogue("Could not open file: $!");
+		open (REPORT, ">$file") || dialogue("Error: Could not open file: $!");
 		print REPORT $output;
 		close (REPORT);
 		sbarprint("\n$file report generated");
@@ -4679,14 +4884,42 @@ EOT
 #---------------#
 
 sub dialogue {
-	my ($message, $type) = @_;
-	$type ||= 'OK';
-	my $info_d = $top->messageBox(-title=>'Warning',
-				-message=> $message,
-				-type => $type,
-				-icon=>'info'
-				);
-	return $info_d;
+	my ($message, @buttons) = @_;
+	@buttons = ('OK') unless @buttons;
+	
+	my ($title, $text) = $message =~ /(\w+?)\:\s*/;
+	$title ||= "Warning";
+	$text ||= $message;
+	
+	my $icon = 'info';
+	$icon = 'error' if $title =~ /error/i;
+	$icon = 'question' if $#buttons > 1;
+	
+	### Neither messageBox or Dialog are really suitable here - clunky, ugly,
+	### different appearances under different OSes.  Need to write our own dialogue
+	### handling code sometime ...		
+			
+	# messageBox code
+	my $type = join("", @buttons);		
+	my $selected = $top->messageBox(
+			-title=>$title,
+			-message=> $text,
+			-type => $type,
+			-icon=> $icon,
+		);
+		
+	# dialog code (currently not used)	
+	# my $dialogue = $top->Dialog(
+			# -title => $title,
+			# -text => $text,
+			# -bitmap => $pixmap,
+			# -default_button => $buttons[0],
+			# -buttons => \@buttons,
+		# );
+		# 
+	# my $selected = $dialogue->Show();
+	
+	return $selected;
 }
 
 
@@ -4841,7 +5074,7 @@ Warnecke PM, Stirzaker C, Song J, Grunau C, Melki JR, Clark SJ.  Identification 
 EOT
 			
 	my $text_thanks=<<EOT;
-Alf Easton
+Alf Eaton
 Alexander Kozik
 Chris Vega
 Katrina Bell
@@ -4907,7 +5140,6 @@ sub prefs {
 			-inactivebackground=>"#$nb_colour",
 			-relief => 'raised',
 			-bd => 1,
-			# -font => $gui_font,
 		)->pack(
 			-expand=>1,
 			-padx=>4,
@@ -4932,17 +5164,63 @@ sub prefs {
 	my $prefs_page_gui_f = $prefs_page_gui->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
 	
 	my $prefs_fb = $prefs->Frame()->pack(-side=>'bottom', -padx=>2, -fill=>'none');
-
+	
+	# code for directory browser - ActiveState has not updated their Perl/Tk distribution
+	# for some time, thus it lacks the chooseDirectory command.
+	my $browse_directory = sub {
+		my ($dir_ref, $title) = @_;
+		my $w = $top->Toplevel(-title=>"Select $title directory");
+		my $w_b = $w->Frame()->pack(-side=>'bottom', -padx=>2, -fill=>'none');
+		
+		my $dir;
+		my $dir_list;
+		
+		# more code to cover up for windows bugs
+		my $initial_dir = $$dir_ref;
+		$initial_dir =~ s/(\w:\\).*/$1/;
+		
+		$dir_list = $w->Scrolled('DirTree',
+				-width=>45,
+				-height=>35,
+				-scrollbars=>'osoe',
+				-selectmode=>'browse',
+				-command=> sub {$dir_list->opencmd(shift)},
+				-browsecmd=> sub {$dir = shift},
+				-directory=>$initial_dir,
+				)->pack(-fill=>'both', -expand=>1);
+		nr(\$w_b);
+		pack_gui('OK', sub {$w->destroy; $dir =~ s/\//\\/g if $os eq 'win'; $$dir_ref=$dir.$dir_sep}, 'bd_ok', '', 'b');
+		pack_gui('Cancel', sub {$w->destroy}, 'bd_cancel', '', 'b');
+		$w->Icon(-image => $pixmap);
+		bind_mousewheel($dir_list);
+		# $dir_list->opencmd($$dir_ref);
+	};
+	
 	nr(\$prefs_page_general_f, 2);
 		nr();
 			$font = $gui_font_bold;
-			pack_gui("Files/executables", "", "prefs_files_l", \$prf{prefs_gen}, 'lt');
+			pack_gui("Directories", "", "prefs_directories_l", \$prf{prefs_gen}, 'lt');
 			$font = $gui_font;
 		nr();
 			pack_gui("Home directory", $HOME, "prefs_files_home", \$prf{prefs_gen}, 20);
-		nr();
-			pack_gui("Path to Spidey executable", $file_pre, "prefs_files_spidey", \$prf{prefs_gen}, 20);
+			# pack_gui("Choose ...", sub {my $dir = $top->chooseDirectory; return unless $dir; $HOME=$dir.$dir_sep}, "prefs_files_home_b", '', 'b');
+			# my $open_home = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), sub {my $dir = $top->chooseDirectory(-initialdir=>$HOME); return unless $dir; $HOME=$dir.$dir_sep})->pack();
+			my $open_home = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$HOME, "home")])->pack();
+
+		nr('',0);
+			pack_gui("Temp directory", $tmp, "prefs_files_tmp", '', 20);
+			my $open_tmp = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$tmp, "tmp")])->pack();
+		nr('',0);
+			pack_gui("Path to Spidey executable", $spidey_path, "prefs_files_spidey", \$prf{prefs_gen}, 20);
+			my $open_spidey = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$spidey_path, "Spidey")])->pack();
+		nr('', 7);
 		
+		nr();
+			$font = $gui_font_bold;
+			pack_gui("Opening files", "", "prefs_files_l", \$prf{prefs_gen}, 'lt');
+			$font = $gui_font;	
+		nr('',0);
+			pack_gui('Prompt to save existing project before opening new data', $file_data_overwrite, "prefs_files_overwrite", '', 'c', 0, 1);
 		nr('', 7);
 		
 		nr();	
@@ -4958,16 +5236,6 @@ sub prefs {
 		nr();
 			pack_gui("Monovalent cations: ", $monovalent_cation_conc, "prefs_oligo_runs", \$prf{prefs_gen}, 5, '', "", "mM");
 			
-		nr('', 7);
-		
-		nr();	
-			$font = $gui_font_bold;
-			pack_gui("ORF / CpG island finding behaviour", "", "prefs_oligo", \$prf{prefs_gen}, 'lt');
-			$font = $gui_font;
-		nr('',0);
-			pack_gui('Defer to capitalised regions', $defer_to_caps, "prefs_defer", \$prf{prefs_gen}, 'c', 0, 1);		
-		nr('',2);
-
 	nr(\$prefs_page_repeats_f, 2);
 		nr();
 			$font = $gui_font_bold;
@@ -5031,13 +5299,20 @@ sub prefs {
 		nr();	
 			pack_gui("Minimum obs/exp: ", $cpg_oe, "prefs_bioinf_oe", \$prf{prefs_bioinf}, 5);
 		nr();	
-			pack_gui("Minimum GC content: ", $cpg_gc, "prefs_bioinf_gc", \$prf{prefs_bioinf}, 5, '','', '%');
-			
-		nr('',5);
-		
+			pack_gui("Minimum GC content: ", $cpg_gc, "prefs_bioinf_gc", \$prf{prefs_bioinf}, 5, '','', '%');		
 		nr('',0);
 			pack_gui('Emulate cpgplot', $cpgplot_method, "prefs_cpgplot_method", '', 'c', 0, 1);
+		nr('', 7);
+		
+		nr();	
+			$font = $gui_font_bold;
+			pack_gui("ORF / CpG island finding behaviour", "", "prefs_oligo", \$prf{prefs_gen}, 'lt');
+			$font = $gui_font;
+		nr('',0);
+			pack_gui('Defer to capitalised regions', $defer_to_caps, "prefs_defer", \$prf{prefs_gen}, 'c', 0, 1);		
 		nr('',2);
+
+					
 		
 	nr(\$prefs_page_cloning_f, 2);
 		nr();
@@ -5069,7 +5344,15 @@ sub prefs {
 		nr();	
 			pack_gui('Address: ', $http_proxy, 'prefs_connection_address', \$prf{prefs_connection}, 30);
 			pack_gui('Port', $http_port, 'prefs_connection_port', \$prf{prefs_connection}, 5, 2);
-		nr('',2);
+		nr('',7);
+		nr();
+			$font = $gui_font_bold;
+			pack_gui("Interaction with external applications", "", "prefs_contigviewer_l", '', 'lt');
+			$font = $gui_font;
+		nr();
+			pack_gui('Listen to port ', $tcp_port, "prefs_contigviewer_port", '', 6);
+		nr('',0);
+			pack_gui('Automatically find primers upon receiving data', $ipc_autofind, "prefs_contigviewer_autofind", '', 'c', 0, 1);
 	
 			
 	nr(\$prefs_page_gui_f, 3);
@@ -5183,13 +5466,13 @@ sub find_gene {
 	# case (upper-case marks genes) (can have more than one ORF in the same
 	# sequence, which the ORF-finding sub doesn't allow; also speeds things
 	# up a bit by not having to ORF/CpG-find each time)
-	$_ = $_[0];
+	$_ = shift;
 	return if length($_) == 0;
 	my ($subroutine) = get_variables(qw(find_sub));
 
 	s/\>.*\n//g; #remove FASTA formatting if it exists
-	s/[\s|\n]//g; #remove spaces/tabs/new lines
-	# s/[^ACGTXN]//ig; #remove any other characters that shouldn't be there
+	$_ = clean_seq($_);
+
 	my @array = ();
 	my $prev = 0;
 	my $nb_page = which_nb_page();
@@ -5212,17 +5495,14 @@ sub find_gene {
 	# if we didn't find any marked regions, let's hand it over to our built in,
 	# trusty orf and cpg finding routines ...
 	return  &$subroutine($_);
-	
-	# my ($sel5, $sel3);
-	# ($sel5, $sel3) = &$subroutine($_);
-	# return ([$sel5, $sel3]);
 }
+
 
 sub find_orf {
 	# no gene marked - try to find ORF since user has requested it
-	$_ = lc($_[0]);
-	s/[\s|\n]//g;
-	# s/[^ACGTXN]//ig;
+	$_ = lc(shift);
+	$_ = clean_seq($_);
+
 	my ($seq_ref) = get_variables('seq');
 
 	my @orf=();
@@ -5236,6 +5516,7 @@ sub find_orf {
 		for ($j = $i; $j<(length($seq)-3); $j+=3) {
 			my $codon = uc(substr($seq, $j, 3));
 			my $aa = $genetic_code{$codon};
+			$aa ||= "X";
 			unless ($aa eq "*") {
 				# only take ORF from initiating Met codon
 				next if ($aa ne "M") && ($met_init==0);
@@ -5291,9 +5572,8 @@ sub find_orf {
 sub find_cpg {
 	# no CpG marked - try to find CpG islands from sequence
 	# two methods: correct and cpgplot emulation
-	$_ = lc($_[0]);
-	s/[\s|\n]//g;
-	# s/[^ACGTXN]//ig;
+	$_ = lc(shift);
+	$_ = clean_seq($_);
 	
 	my $seq = $_;
 	my $seq_len = length($seq);
@@ -5440,7 +5720,6 @@ sub draw_dna {
 	my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p, $canvas) 
 		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p canvas)); 
 
-	# my $canvas = which_canvas_ref();
 	my $seq = get_seq();
 	
 	# delete old canvas elements
@@ -5457,7 +5736,6 @@ sub draw_dna {
 	
 	# Amplicon size
 	if (($$max_ampsize)&&($$min_ampsize)&&($$max_range)) {
-		# print "max_range_5p = $$max_range_5p, max_range_3p = $$max_range_3p\n";
 		$min_amp_canvas{$canv} = $$max_range_5p * $dna_canvas_size + $dna_canvas_offset if defined($$max_range_5p);
 		$max_amp_canvas{$canv} = $$max_range_3p * $dna_canvas_size + $dna_canvas_offset if defined($$max_range_3p);
 		$$canvas->createRectangle($min_amp_canvas{$canv},$dc_sel_y1-$dc_sel_offset2,$max_amp_canvas{$canv},$dc_sel_y2+$dc_sel_offset2, -fill=>'orange', -outline=>'orange4', -width=>1, -tag=>'amp_range');
@@ -5489,9 +5767,9 @@ sub draw_dna {
 			$$canvas->createRectangle($min_range_canvas{$canv},$dc_dna_y1,$max_range_canvas{$canv},$dc_dna_y2, -fill=>'midnightblue', -tag=>'gene_range');
 		}
 	}
-	
+		
 	# QPCR specific:
-	if ($qpcr_flag==1) {
+	if ($canv eq 'qpcr') {
 		foreach my $i (@intron_exon_bounds) {
 			my $iex = $i * $dna_canvas_size + $dna_canvas_offset;
 			$$canvas->createLine($iex, $dc_dna_y1, $iex, $dc_dna_y2, -fill=>'white', -tag=>'ie_boundary');
@@ -5506,22 +5784,40 @@ sub items_drag {
 		= get_variables(qw(min_ampsize max_range_5p min_range max_range max_range_3p)); 
 
 	my $canv = which_nb_page();
-	return if $canv eq 'qpcr';
-	my $ref = $_[1];
-	my $x = $_[0];
+			
+	my ($x,$ref) = @_;
 	
 	my $width = $$ref->width;
 	my $dna_max = $width-$dna_canvas_offset;
 	my $dna_min = $dna_canvas_offset;
 	
+	$x = sprintf("%.0f", $$ref->canvasx($x));
+	$x = $dna_min if $x < $dna_min;
+	$x = $dna_max if $x > $dna_max;
+	
+	if ($canv eq 'qpcr') {
+		# get DNA base
+		$x = ($x-$dna_canvas_offset) / $dna_canvas_size;
+		
+		# exon selection
+		my $last_ie = 0;
+		my $exon_count;
+		foreach (@intron_exon_bounds) {
+			$exon_count++;
+			if ($x>$last_ie && $x<$_) {
+				select_exon($exon_count, 5);
+				return;
+			}
+		}
+		$exon_count++;
+		select_exon($exon_count, 5);
+		return;
+	}
+
 	if (($$max_range)&&($$min_range)) {
 		$min_range_canvas{$canv} = $$min_range * $dna_canvas_size + $dna_canvas_offset;
 		$max_range_canvas{$canv} = $$max_range * $dna_canvas_size + $dna_canvas_offset;
 	}
-
-	$x = sprintf("%.0f", $$ref->canvasx($x));
-	$x = $dna_min if $x < $dna_min;
-	$x = $dna_max if $x > $dna_max;
 
 	if (($min_amp_canvas{$canv}) && ($max_amp_canvas{$canv})) {
 		$x = $min_amp_canvas{$canv} if $x < $min_amp_canvas{$canv};
@@ -5542,22 +5838,53 @@ sub items_drag {
 	$$min_ampsize = $$max_range - $$min_range;
 }
 
+sub select_exon {
+	my ($exon, $end) = @_;
+	$ie_limit ||= 1;
+	$ie_limit_5p = $exon if $end == 5;
+	$ie_limit_3p = $exon if $end == 3;
+}
+
 sub amplicon_drag {
 	my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p) 
 		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p)); 
 
 	my $canv = which_nb_page();
-	return if $canv eq 'qpcr';
-	my $ref = $_[1];
-	my $x = $_[0];
-
-	my $seq = get_seq();
-	$seq =~ s/[\n|\s]//g;
-	my $seq_len = length($seq)-1;
+	
+	my ($x,$ref) = @_;
 	
 	my $width = $$ref->width;
 	my $dna_max = $width-$dna_canvas_offset;
 	my $dna_min = $dna_canvas_offset;
+
+	$x = sprintf("%.0f", $$ref->canvasx($x));
+	$x = $dna_min if $x < $dna_min;
+	$x = $dna_max if $x > $dna_max;
+	
+	if ($canv eq 'qpcr') {
+		# get DNA base
+		$x = ($x-$dna_canvas_offset) / $dna_canvas_size;
+		
+		# exon selection
+		my $last_ie = 0;
+		my $exon_count;
+		foreach (@intron_exon_bounds) {
+			$exon_count++;
+			if ($x>$last_ie && $x<$_) {
+				select_exon($exon_count, 3);
+				return;
+			}
+		}
+		$exon_count++;
+		select_exon($exon_count, 3);
+		return;
+	}
+
+	
+	my $seq = get_seq();
+	$seq = clean_seq($seq);
+	my $seq_len = length($seq)-1;
+	
 	my $dna_max2 = $$max_range*$dna_canvas_size + $dna_canvas_offset;
 	my $dna_min2 = $$min_range*$dna_canvas_size + $dna_canvas_offset;
 
@@ -5567,9 +5894,6 @@ sub amplicon_drag {
 		$max_amp_canvas{$canv} = ($$max_ampsize+$$min_range) * $dna_canvas_size + $dna_canvas_offset unless $max_amp_canvas{$canv} ;
 	}
 
-	$x = sprintf("%.0f", $$ref->canvasx($x));
-	$x = $dna_min if $x < $dna_min;
-	$x = $dna_max if $x > $dna_max;
 
 	
 	if ($x-$min_amp_canvas{$canv}<$max_amp_canvas{$canv}-$x)  {
@@ -5953,7 +6277,9 @@ sub dna_magnify {
 			my ($j,$k)=(0,0);
 			for ($j=$start; $j<$end; $j+=3) {
 				my $codon = uc(substr($seq, $j, 3));
-				$peptide .= $genetic_code{$codon}."  ";
+				my $aa = $genetic_code{$codon};
+				$aa ||= "X";
+				$peptide .= $aa."  ";
 				if ($k == 1) {
 					my $tend = $j+3;
 					$$text_ref->tagAdd('codon', "3.$j", "3.$tend");
@@ -6032,23 +6358,30 @@ sub pp_file_open {
 	# support for another varible simple entails a single line in either the
 	# %variables or %arrays hashes - everything else is automatic ... )
 	
-	my ($file) = @_;
+	my ($file, @file_data) = @_;
 	$file ||= $top->getOpenFile(-filetypes=>$file_types);
 	return unless defined($file);
 		
-	# clear previous selections:
-	#$max_range=$min_range=$max_range_5p=$max_range_3p=undef;
-	
-	unless (open (SEQ, "<$file")) {
-		dialogue("Could not open file $file: $!");
-		return;
+	unless (@file_data) {
+		unless (open (SEQ, "<$file")) {
+			dialogue("Could not open file $file: $!");
+			return;
+		}
+		sbarprint("\nOpening $file ...");
+		@file_data = <SEQ>;
+		close SEQ;
+	} else {
+		sbarprint("\nReading data from port $tcp_port ...");
 	}
-	sbarprint("\nOpening $file ...");
-	my @file_data = <SEQ>;
-	close SEQ;
+	
+	# clear previous selections:
+	# new_file();
 	
 	my ($nb_page, $name) = open_file_type($file, @file_data);
-	return unless ($nb_page);
+	unless ($nb_page) {
+		$cancel = 0;
+		return;
+	}
 	
 	# redraw dna
 	draw_dna();
@@ -6118,6 +6451,11 @@ sub open_ppr {
 		if (/nb = (.*)/) {
 			$nb->raise($1);
 			$top->update;
+			new_file();
+			if ($cancel) {
+				sbarprint("\nFile open cancelled");
+				return;
+			}
 			$nb_page = $1;
 			next;
 		} elsif (/\[arrays\]/) {
@@ -6208,34 +6546,49 @@ sub open_fasta {
 		if (/^\>/) {
 			next if $flag;
 			($name, $range_5a, $range_5b, $range_3a, $range_3b, $page) = /^\>\s*(.+?)\s*(?:5prime_region\[(\d+)-(\d+)\])?\s*(?:3prime_region\[(\d+)-(\d+)\])?\s*(?:page\[(\d+)\])?\s*$/;
+			
+			# process name (remove whitespace, other illegal filename chars)
+			$name =~ s/\s+/_/g; # whitespace
+			$name =~ s/[,]//g; # other characters - in progress
+			
 			$page = 1 unless ($page && $nb_page_ref{$page});
 			$nb_page = $nb_page_ref{$page};
 			$nb->raise($nb_page);
 			$top->update;
-			
-			my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p) 
-				= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p));
-			
-			if ($range_5a && $range_5b && $range_3a && $range_3b) {
-				$$max_range_5p = $range_5a;
-				$$min_range = $range_5b;
-				$$max_range = $range_3a;
-				$$max_range_3p = $range_3b;
-				
-				$$min_ampsize=$$max_range - $$min_range;
-				$$max_ampsize=$$max_range_3p - $$max_range_5p;
-			}
-			
+			if ($cancel) {
+				sbarprint("\nFile open cancelled");
+				return;
+			}			
 			$flag = 1;
 		} else {
 			$dna .= "$_";
 		}
 	}
 	
-	# insert FASTA sequence
-	my ($seq_ref) = get_variables(qw(seq));
-	$$seq_ref->delete(0.1,"end");
-	$$seq_ref->insert(0.1,$dna);
+	# insert dna sequence if present
+	if ($dna && $dna =~ /[agct]/i) {
+		new_file();
+		my ($seq_ref) = get_variables(qw(seq));
+		$$seq_ref->delete(0.1,"end");
+		$$seq_ref->insert(0.1,$dna);
+	}
+	
+	# set ranges if specified
+	my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p) 
+		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p));
+	
+	if ($range_5a && $range_5b && $range_3a && $range_3b) {
+		$$max_range_5p = $range_5a;
+		$$min_range = $range_5b;
+		$$max_range = $range_3a;
+		$$max_range_3p = $range_3b;
+		
+		$$min_ampsize=$$max_range - $$min_range;
+		$$max_ampsize=$$max_range_3p - $$max_range_5p;
+	}
+	
+	# set range to ORF if not
+	reset_bounds() unless $$min_range && $$max_range;
 	
 	return ($nb_page, $name);
 }
@@ -6363,12 +6716,34 @@ sub open_seq {
 
 sub save_seq {
 	# saves sequence in text widget to file
-	my $ref = $_[0];
-	my $file = $top->getSaveFile(-defaultextension=>'.txt');
+	my $ref = shift;
+	my $file = $top->getSaveFile(-filetypes=>$file_types_dna, -defaultextension=>'.fasta');
 	my $seq = $$ref->get(0.1, 'end');
+	my $nb_page = which_nb_page();
 	if (defined($file)) {
+		my $out;
+		if ($file =~ /\.fasta$/) {
+			my $description = $open_file{$nb_page};
+			$description = $file if $description eq 'File not saved';
+			$description =~ s/.*[\\\/]//g;
+			
+			# open description window
+			my $descript_w = $top->Toplevel(-title=>'Enter FASTA description line');
+			nr(\$descript_w);
+			pack_gui('',$description, 'description_text', '', 35);
+			pack_gui('OK', sub {$descript_w->destroy}, 'description_ok', '', 'b', 'active');
+			$descript_w->Icon(-image => $pixmap);
+			$descript_w->grab;
+			$descript_w->waitWindow;
+			
+			my $fasta = ">$description\n$seq";
+			$out = $fasta;
+		} else {
+			$out = $seq;
+		}
+		
 		open (SEQ, ">$file") || dialogue("Could not open file: $!");
-		print SEQ $seq;
+		print SEQ $out;
 		close (SEQ);
 		sbarprint("\n$file saved successfully");
 	}
@@ -6584,6 +6959,94 @@ static char * open_20_xpm[] = {
 "                    "};
 end_of_pixmap
 
+$icon_open_small = <<'end_of_pixmap';
+/* XPM */
+static char * open_xpm[] = {
+"18 18 64 1",
+" 	c None",
+".	c #000000",
+"+	c #E4E5DF",
+"@	c #D5D6CB",
+"#	c #D6D7CA",
+"$	c #A3A39D",
+"%	c #F5F6F0",
+"&	c #8D907B",
+"*	c #92957E",
+"=	c #90937D",
+"-	c #979B84",
+";	c #6D705F",
+">	c #EAECDB",
+",	c #8A8C7D",
+"'	c #8E917B",
+")	c #91947F",
+"!	c #8B8E7A",
+"~	c #999B87",
+"{	c #919480",
+"]	c #989B86",
+"^	c #B1B4A2",
+"/	c #A2A394",
+"(	c #F7F7F7",
+"_	c #878A75",
+":	c #666858",
+"<	c #4B4D3F",
+"[	c #4D4F40",
+"}	c #404135",
+"|	c #424337",
+"1	c #434437",
+"2	c #404236",
+"3	c #3C3D32",
+"4	c #48493C",
+"5	c #1A1A16",
+"6	c #C6C6BE",
+"7	c #848672",
+"8	c #25261F",
+"9	c #F1F2E9",
+"0	c #DDE0C7",
+"a	c #D6DABB",
+"b	c #CDD2AC",
+"c	c #C7CCA7",
+"d	c #989C80",
+"e	c #C6C7BE",
+"f	c #5F6152",
+"g	c #888980",
+"h	c #A7AB8C",
+"i	c #878A70",
+"j	c #9FA19A",
+"k	c #EFF0E5",
+"l	c #9EA284",
+"m	c #80817B",
+"n	c #96968D",
+"o	c #E3E5D1",
+"p	c #83866D",
+"q	c #97998D",
+"r	c #EDEFE2",
+"s	c #A2A688",
+"t	c #767671",
+"u	c #E7E9DA",
+"v	c #D1D3BD",
+"w	c #BBBF9D",
+"x	c #989B80",
+"y	c #6E715C",
+"                  ",
+"                  ",
+"                  ",
+"    ....          ",
+"   .+@#$.         ",
+"  .%&*=-;.....    ",
+"  .>,')!~{]{^/.   ",
+"  .(_:<[}||12345  ",
+"  .67890abbbbbcd. ",
+"  .efg0bbbbbbbhi. ",
+"  .j8kabbbbbbbl.  ",
+"  .mnobbbbbbbbp.  ",
+"  .qrbbbbbbbbs.   ",
+"  .tuvwwwwwwxy.   ",
+"   ...........    ",
+"                  ",
+"                  ",
+"                  "};
+end_of_pixmap
+		
 $icon_save = <<'end_of_pixmap';
 /* XPM */
 static char * save_20_xpm[] = {
@@ -8570,6 +9033,93 @@ static char * open_dna_20_iii_xpm[] = {
 "                  [+        }+|+1+      ",
 "                                        ",
 "                                        "};
+end_of_pixmap
+		
+$info_pixmap = <<'end_of_pixmap';
+/* XPM */
+static char * info_qt_ii_xpm[] = {
+"32 32 5 1",
+" 	c None",
+".	c #CECECE",
+"+	c #FFFFFF",
+"@	c #2C4DA0",
+"#	c #000000",
+"           ........             ",
+"        ...++++++++...          ",
+"      ..++++++++++++++..        ",
+"     .++++++++++++++++++.       ",
+"    .++++++++@@@@++++++++#      ",
+"   .++++++++@@@@@@++++++++#     ",
+"  .+++++++++@@@@@@+++++++++#    ",
+" .+++++++++++@@@@+++++++++++#   ",
+" .++++++++++++++++++++++++++#.  ",
+".++++++++++++++++++++++++++++#. ",
+".++++++++++@@@@@@@+++++++++++#. ",
+".++++++++++++@@@@@+++++++++++#..",
+".++++++++++++@@@@@+++++++++++#..",
+".++++++++++++@@@@@+++++++++++#..",
+".++++++++++++@@@@@+++++++++++#..",
+".++++++++++++@@@@@+++++++++++#..",
+" .+++++++++++@@@@@++++++++++#...",
+" .+++++++++++@@@@@++++++++++#...",
+"  .++++++++++@@@@@+++++++++#... ",
+"   #+++++++@@@@@@@@@++++++#.... ",
+"    #++++++++++++++++++++#....  ",
+"     #++++++++++++++++++#....   ",
+"      ##++++++++++++++##....    ",
+"       .###++++++++###.....     ",
+"        ...###++++#.......      ",
+"          ....#+++#.....        ",
+"             .#+++#..           ",
+"               #++#..           ",
+"                #+#..           ",
+"                 ##..           ",
+"                  ...           ",
+"                   ..           "};
+end_of_pixmap
+		
+$error_pixmap = <<'end_of_pixmap';
+/* XPM */
+static char * error_xpm[] = {
+"34 34 4 1",
+" 	c None",
+".	c #000000",
+"+	c #F9BD3B",
+"@	c #CECECE",
+"                                  ",
+"              ...                 ",
+"             .+++.                ",
+"            .+++++.@              ",
+"            .+++++.@@             ",
+"           .+++++++.@@            ",
+"           .+++++++.@@            ",
+"          .+++++++++.@@           ",
+"          .+++++++++.@@           ",
+"         .+++++++++++.@@          ",
+"         .++++...++++.@@          ",
+"        .++++.....++++.@@         ",
+"        .++++.....++++.@@         ",
+"       .+++++.....+++++.@@        ",
+"       .+++++.....+++++.@@        ",
+"      .++++++.....++++++.@@       ",
+"      .++++++.....++++++.@@       ",
+"     .++++++++...++++++++.@@      ",
+"     .++++++++...++++++++.@@      ",
+"    .+++++++++...+++++++++.@@     ",
+"    .++++++++++.++++++++++.@@     ",
+"   .+++++++++++.+++++++++++.@@    ",
+"   .+++++++++++++++++++++++.@@    ",
+"  .++++++++++++..+++++++++++.@@   ",
+"  .+++++++++++....++++++++++.@@   ",
+" .++++++++++++....+++++++++++.@@  ",
+" .+++++++++++++..++++++++++++.@@  ",
+" .+++++++++++++++++++++++++++.@@@ ",
+" .+++++++++++++++++++++++++++.@@@ ",
+"  .+++++++++++++++++++++++++.@@@@ ",
+"   .........................@@@@@ ",
+"     @@@@@@@@@@@@@@@@@@@@@@@@@@@  ",
+"      @@@@@@@@@@@@@@@@@@@@@@@@@   ",
+"                                  "};
 end_of_pixmap
 
 									

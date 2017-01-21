@@ -1,3 +1,36 @@
+19/04/04:	(PerlPrimer-1.1.3)
+		Trial self-executable format for Windows (warning: >3 Mb download) created using PAR (http://par.perl.org)
+		Save DNA sequence dialogue now has options for both .fasta and .txt formats (default is .fasta)
+		Saving DNA sequence in FASTA format now prompts the user for a description line (default is the open file name, if any)
+		Better processing of FASTA files when opening (whitespace and some illegal characters are removed from the description line when taking the file name)
+
+18/04/04:	Buttons to choose home, tmp, and spidey-location directories in the Preferences dialogue
+		Rearranged Preferences dialogue:  Separate sections for directories and behaviour when opening new files in the "General" tab; defer-to-capitalised-regions option is now in the "Bioinformatics" tab
+
+15/04/04:	Checkbox now present to control whether QPCR primers need to span an intron/exon boundary or not (old method from 02/04/04 still works as well)
+		When QPCR data are retrieved from Ensembl, Spidey is run automatically and intron/exon boundaries are shown on the DNA graphic
+		QPCR exon limits can now be selected with the mouse on the DNA graphic - use the left button to select the 5' range and the middle button (or Ctrl-Button 1) to select the 3' range (i.e. just like setting the range for other PCR methods)
+		Species name is now added to the default file name when a sequence is retrieved from Ensembl
+		Path to system temporary directory can be set in the Preferences
+		BUGFIX: Generate report did not save a report if the perlprimer file had not been saved
+		BUGFIX: PerlPrimer now handles degenerate sequences better (including gapped sequences) when finding ORFs
+		BUGFIX: If default values were 0 they were not restored to default when opening a new file
+		Code tidying and new balloon help messages
+
+14/04/04:	QPCR can now select primers targeting a range of exons or a single exon (suggested by Alf Eaton)
+		BUGFIX: temporary dna and mrna files for Spidey are now saved in the system tmp directory, rather than the directory where Spidey is located (suggested by Alf Eaton)
+
+02/04/04:	QPCR can now design primers that surround an intron/exon boundary but do not span the boundary (delete the value in the "Minimum Intron/Exon boundary" box for this to work (now deprecated - see above)) (suggested by John Luckey)
+
+01/04/04:	Changes to dialogue box code
+		Minor code tidying
+
+31/03/04:	Preferences option to automatically find primers when receiving data from external applications through the tcp socket
+		Opening a new file when previous data exists now prompts the user to save (may be overridden in the preferences)
+		Opening a file now explicitly clears all data before opening
+
+30/03/04:	TCP socket reading added for interaction between PerlPrimer and Contig Viewer
+
 29/03/04:	(PerlPrimer-1.1.2)
 		BUGFIX: After finding sequencing primers, primer-dimer finding routine was not reset to only search for extensible dimers
 		Minor changes to DNA sequence opening routines to make use of the improved FASTA header functions 
@@ -7,7 +40,7 @@
 		Better routines for finding the Spidey executable on all platforms (perlprimer now uses a *pidey.* glob and picks the largest file from all matches, in case the archive file is present in the same directory)
 		Perlprimer now screens each primer for degenerate/non-DNA symbols and will not calculate Tm if these are present
 
-22/03/04:	All fonts (main gui font, primer list font and fixed font for sequences) can now be specified in the preferences (suggested by Alf Easton)
+22/03/04:	All fonts (main gui font, primer list font and fixed font for sequences) can now be specified in the preferences (suggested by Alf Eaton)
 
 16/03/04:	(PerlPrimer-1.1.1)
 		Added the .fasta file type to the Open File dialogue box
