@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.6 (4/2/2005)
+# version 1.1.7 (19/5/2005)
 # Copyright © 2003-2005, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,9 +29,10 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.6";
+	$version = "1.1.7";
+	$win_exe = 0;
+	
 	($commandline) = @ARGV;
-	$win_exe = 1;
 	
 	if ($commandline && $commandline =~ /^-[\w-]+/) {
 		print <<EOT;
@@ -189,6 +190,7 @@ my $min_ampsize_q=100;
 my $max_ampsize_q=300;
 my $ie_overlap=1;
 my $exclude_ie=7;
+my $ie_span=1;
 
 my $min_tm_seq = 56; # Sequencing
 my $max_tm_seq = 64;
@@ -249,6 +251,7 @@ my %default_variables = (
 		\$exclude_clamp => $exclude_clamp,
 		\$ie_overlap => $ie_overlap,
 		\$exclude_ie => $exclude_ie,
+		\$ie_span => $ie_span,
 	},
 );
 
@@ -267,7 +270,7 @@ if ($^O =~ /mswin/i) {
 	$HOME ||= 'c:\\'; # only if not set by $ENV above
 	$tmp ||= 'c:\temp\\'; # only if not set by $ENV above
 	$dir_sep = '\\';
-	$gui_font_face = "MS Sans Serif";
+	$gui_font_face = "Arial";
 	$gui_font_size = 8;
 	$list_font_face = "Verdana";
 	$list_font_size = 7;
@@ -366,13 +369,21 @@ my $ensembl_type = 'cdna';
 my @ensembl_species = split("\n",
 "Homo_sapiens
 Mus_musculus
-Rattus_norvegicus
+-------------------
+Anopheles_gambiae
+Apis_mellifera
+Canis_familiaris
+Caenorhabditis_elegans
+Ciona_intestinalis
+Drosophila_melanogaster
 Danio_rerio
 Fugu_rubripes
-Caenorhabditis_elegans
-Caenorhabditis_briggsae
-Drosophila_melanogaster
-Anopheles_gambiae");
+Gallus_gallus
+Pan_troglodytes
+Rattus_norvegicus
+Saccharomyces_cerevisiae
+Tetraodon_nigroviridis
+Xenopus_tropicalis");
 
 my @ensembl_types = split("\n",
 "genomic
@@ -383,6 +394,7 @@ utr3");
 
 # BLAST search parameters
 my $blast_expect = 10;
+my $blast_word_size = 7;
 my $blast_database = 'nr';
 my @blast_database_array = split("\n",
 "nr
@@ -533,8 +545,8 @@ my (
 # GUI globals
 my (
 	%prr, %prc, %pre, %prb, %prl, %prf,
-	$fprimer, $fprimer_tm, $fprimer_len, $fprimer_ds, $fprimer_dh, $fprimer_dg,
-	$rprimer, $rprimer_tm, $rprimer_len, $rprimer_ds, $rprimer_dh, $rprimer_dg,
+	$fprimer, $fprimer_tm, $fprimer_len, $fprimer_ds, $fprimer_dh, $fprimer_dg, $fprimer_gc,
+	$rprimer, $rprimer_tm, $rprimer_len, $rprimer_ds, $rprimer_dh, $rprimer_dg, $rprimer_gc,
 	$old_reference, $text_widget_ref,
 	$style_primer, $style_tm,
 	%min_amp_canvas, %max_amp_canvas, %min_range_canvas, %max_range_canvas,
@@ -655,6 +667,7 @@ my %variables = (
 		ie_limit => \$ie_limit,
 		ie_limit_5p => \$ie_limit_5p,
 		ie_limit_3p => \$ie_limit_3p,
+		ie_span => \$ie_span,
 	},
 );
 
@@ -703,6 +716,7 @@ my %pref_variables = (
 	blast_database => \$blast_database,
 	blast_entrez_query => \$blast_entrez_query,
 	blast_expect => \$blast_expect,
+	blast_word_size => \$blast_word_size,
 	local_blast => \$local_blast,
 	local_blast_directory => \$local_blast_directory,
 	local_blast_database => \$local_blast_database,
@@ -839,7 +853,7 @@ my %balloonmsg = (
 	'primer_reset', "Reset the range to the ORF boundaries",
 	'primer_stepin', "Reduce the inner range by 10bp on each side",
 	'primer_stepout', "Increase the outer range by 10bp on each side",
-	'exclude_gc', "Exclude primers with greater than 60% GC content\nor less than 40% GC content",
+	'exclude_gc', "Exclude primers with a GC content outside the range specified in the preferences\n(default is 40-60% GC)",
 	'gc_clamp', "Require primers to have a 3' GC clamp\n(two of the last three bases G or C)",
 	'primer_seq_5f', "Sequence to add to the 5' end of the forward primer\nPlace an underscore (_) before restriction enzyme site\n\nUse the 'Add cloning sequences' menu option to configure this automatically",
 	'primer_seq_5r', "Sequence to add to the 5' end of the reverse primer\nPlace an underscore (_) before restriction enzyme site\n\nUse the 'Add cloning sequences' menu option to configure this automatically",
@@ -870,7 +884,7 @@ my %balloonmsg = (
 	'bisul_cancel', "Cancel the current task",
 	'bisul_view', "Copy the selected primer pairs to the clipboard\n(format is tab-delimited text)",
 	
-	'qexclude_gc', "Exclude primers with greater than 60% GC content\nor less than 40% GC content",
+	'qexclude_gc', "Exclude primers with a GC content outside the range specified in the preferences\n(default is 40-60% GC)",
 	'qgc_clamp', "Require primers to have a 3' GC clamp\n(two of the last three bases G or C)",
 	'qdna_seq', "Genomic DNA sequence: right-click for menu with options\nincluding opening and saving files",
 	'qmrna_seq', "mRNA sequence: right-click for menu with options\nincluding opening and saving files",
@@ -881,16 +895,17 @@ my %balloonmsg = (
 	'qprimer_spidey', "Detailed intron/exon boundary information",
 	'qexclude_ie', "Minimum number of bases within a primer that should overlap an intron/exon boundary",
 	'qie_limit', "Limit primer search to this range of exons",
-	'qie_limit_5p', "Leave blank to represent the first exon",
-	'qie_limit_3p', "Leave blank to represent the last exon",
+	'qie_limit_5p', "Leave blank to represent the first exon\nThe exon can also be selected by left-clicking on the DNA graphic",
+	'qie_limit_3p', "Leave blank to represent the last exon\nThe exon can also be selected by middle-clicking on the DNA graphic",
 	'qie_overlap', "Require at least one primer to overlap an intron/exon boundary",
+	'qie_span', "Require primers to span an intron/exon boundary",
 	
 	'sspacingmin', "Minimum distance between sequencing primers",
 	'sspacingmax', "Maximum distance between sequencing primers",
 	'seqminrange', "The region of the DNA to be sequenced",
 	'seqmaxrange', "The region of the DNA to be sequenced",
 	'seq_getgene', "Set the sequencing region to the boundaries of the largest ORF present",
-	'exclude_gc_seq', "Exclude primers with greater than 60% GC content\nor less than 40% GC content",
+	'exclude_gc_seq', "Exclude primers with a GC content outside the range specified in the preferences\n(default is 40-60% GC)",
 	'gc_clamp_seq', "Require primers to have a 3' GC clamp\n(two of the last three bases G or C)",
 	'exclude_pd_seq', "Do not consider primers which can form dimers\nwith a stability greater than this value",
 	'spdmin', "Do not consider primers which can form dimers\nwith a stability greater than this value",
@@ -899,7 +914,7 @@ my %balloonmsg = (
 	'seq_view', "Copy the selected primer pairs to the clipboard\n(format is tab-delimited text)",
 	
 	'tmbutton', "Calculate Tm, thermodynamic properties and primer-dimers from the primer sequences",
-	'blastbutton', "Perform a BLAST search on the primers (requires an internet connection)",
+	'blastbutton', "Perform a BLAST search on the primers\n(requires an internet connection)",
 	
 	'prefs_defer', "Do not attempt to find an ORF or CpG Islands if\na captalised region is already present in the\nDNA sequence - use that region to set the range instead",
 	'prefs_cpgplot_method', "Emulate the behaviour of the program cpgplot when\nfinding CpG islands (please note that this will cause the \%GC and O/E\nto be an overestimate - see the documentation for details)",
@@ -1236,26 +1251,35 @@ pack_gui('LabFrame', 'Forward primer', 'forward_l', \$page_primerf);
 	my $col_ref = $row_counter[-1];
 		nc(\$col_ref);
 			nr(\$row_counter[-1],0);
-			pack_gui('Label', 'Tm: ', 'fprimertm');
+			pack_gui('Label', 'Tm: ', 'fprimertm', -font=>$gui_font_bold);
 			pack_gui('Label', \$fprimer_tm, 'fprimertm');
 			pack_gui('Label', '°C', 'fprimertm');
 			nr('',0);
-			pack_gui('Label', 'dS°: ', 'fprimerds');
+			pack_gui('Label', 'dS°: ', 'fprimerds', -font=>$gui_font_bold);
 			pack_gui('Label', \$fprimer_ds, 'fprimerds');
 			pack_gui('Label', 'eu', 'fprimerds');
-			nr('',0);
-			pack_gui('Label', "dG°$pd_temperature: ", 'fprimerds');
-			pack_gui('Label', \$fprimer_dg, 'fprimerds');
-			pack_gui('Label', 'kcal/mol', 'fprimerds');
+			# nr('',0);
+			# pack_gui('Label', "dG°$pd_temperature: ", 'fprimerds');
+			# pack_gui('Label', \$fprimer_dg, 'fprimerds');
+			# pack_gui('Label', 'kcal/mol', 'fprimerds');
 		nc(\$col_ref);
 			nr(\$row_counter[-1],0);
-			pack_gui('Label', 'Length: ', 'fprimerlen');
+			pack_gui('Label', 'Length: ', 'fprimerlen', -font=>$gui_font_bold);
 			pack_gui('Label', \$fprimer_len, 'fprimerlen');
 			pack_gui('Label', 'bases', 'fprimerlen');
 			nr('',0);
-			pack_gui('Label', 'dH°: ', 'fprimerdh');
+			pack_gui('Label', 'dH°: ', 'fprimerdh', -font=>$gui_font_bold);
 			pack_gui('Label', \$fprimer_dh, 'fprimerdh');
 			pack_gui('Label', 'kcal/mol', 'fprimerdh');
+		nc(\$col_ref);
+			nr(\$row_counter[-1],0);
+			pack_gui('Label', 'GC: ', 'fprimergc', -font=>$gui_font_bold);
+			pack_gui('Label', \$fprimer_gc, 'fprimergc');
+			pack_gui('Label', '%', 'fprimergc');
+			nr('',0);
+			pack_gui('Label', "dG°$pd_temperature: ", 'fprimerds', -font=>$gui_font_bold);
+			pack_gui('Label', \$fprimer_dg, 'fprimerds');
+			pack_gui('Label', 'kcal/mol', 'fprimerds');
 
 
 pack_gui('LabFrame', 'Reverse primer', 'reverse_l', \$page_primerf);
@@ -1267,26 +1291,35 @@ pack_gui('LabFrame', 'Reverse primer', 'reverse_l', \$page_primerf);
 	$col_ref = $row_counter[-1];
 		nc(\$col_ref);
 			nr(\$row_counter[-1],0);
-			pack_gui('Label', 'Tm: ', 'rprimertm');
+			pack_gui('Label', 'Tm: ', 'rprimertm', -font=>$gui_font_bold);
 			pack_gui('Label', \$rprimer_tm, 'rprimertm');
 			pack_gui('Label', '°C', 'rprimertm');
 			nr('',0);
-			pack_gui('Label', 'dS°: ', 'rprimerds');
+			pack_gui('Label', 'dS°: ', 'rprimerds', -font=>$gui_font_bold);
 			pack_gui('Label', \$rprimer_ds, 'rprimerds');
 			pack_gui('Label', 'eu', 'rprimerds');
-			nr('',0);
-			pack_gui('Label', "dG°$pd_temperature: ", 'rprimerds');
-			pack_gui('Label', \$rprimer_dg, 'rprimerds');
-			pack_gui('Label', 'kcal/mol', 'rprimerds');
+			# nr('',0);
+			# pack_gui('Label', "dG°$pd_temperature: ", 'rprimerds');
+			# pack_gui('Label', \$rprimer_dg, 'rprimerds');
+			# pack_gui('Label', 'kcal/mol', 'rprimerds');
 		nc(\$col_ref);
 			nr(\$row_counter[-1],0);
-			pack_gui('Label', 'Length: ', 'rprimerlen');
+			pack_gui('Label', 'Length: ', 'rprimerlen', -font=>$gui_font_bold);
 			pack_gui('Label', \$rprimer_len, 'rprimerlen');
 			pack_gui('Label', 'bases', 'rprimerlen');
 			nr('',0);
-			pack_gui('Label', 'dH°: ', 'rprimerdh');
+			pack_gui('Label', 'dH°: ', 'rprimerdh', -font=>$gui_font_bold);
 			pack_gui('Label', \$rprimer_dh, 'rprimerdh');
 			pack_gui('Label', 'kcal/mol', 'rprimerdh');
+		nc(\$col_ref);
+			nr(\$row_counter[-1],0);
+			pack_gui('Label', 'GC: ', 'fprimergc', -font=>$gui_font_bold);
+			pack_gui('Label', \$rprimer_gc, 'fprimergc');
+			pack_gui('Label', '%', 'fprimergc');
+			nr('',0);
+			pack_gui('Label', "dG°$pd_temperature: ", 'fprimerds', -font=>$gui_font_bold);
+			pack_gui('Label', \$rprimer_dg, 'fprimerds');
+			pack_gui('Label', 'kcal/mol', 'fprimerds');
 
 pack_gui('LabFrame', 'Dimers', 'dim_l', \$page_primerf);
 	nr(\$packed_widgets{dim_l}, $frame_pady, 1);
@@ -1380,6 +1413,7 @@ pack_gui('LabFrame', 'Options', 'primer_options_l', \$page_primer_designf);
 pack_gui('LabFrame', 'Sequence', 'seq_l', \$page_primer_designf);
 	nr(\$packed_widgets{seq_l});
 	pack_gui('Text', 'Sequence', 'seq', 60, 6, -scrollbars=>'oe');
+	pack_menu('seq');
 	pack_osc_buttons('seq');
 
 pack_gui('LabFrame', 'Results', 'res_l', \$page_primer_designf);
@@ -1455,6 +1489,7 @@ pack_gui('LabFrame', 'Options', 'seq_options_l', \$page_sequencingf);
 pack_gui('LabFrame', 'Sequence', 'seq_seq_l', \$page_sequencingf);
 	nr(\$packed_widgets{seq_seq_l});
 	pack_gui('Text', 'Sequence', 'seq_seq', 60, 6, -scrollbars=>'oe');
+	pack_menu('seq_seq');
 	pack_osc_buttons('seq_seq');
 
 pack_gui('LabFrame', 'Results', 'seq_res_l', \$page_sequencingf);
@@ -1537,6 +1572,7 @@ pack_gui('LabFrame', 'Options', 'bisul_options_l', \$page_bisul_seqf);
 pack_gui('LabFrame', 'Sequence', 'bisul_seq_l', \$page_bisul_seqf);
 	nr(\$packed_widgets{bisul_seq_l});
 	pack_gui('Text', 'Sequence', 'bisul_seq', 60, 6, -scrollbars=>'oe');
+	pack_menu('bisul_seq');
 	pack_osc_buttons('bisul_seq');
 
 pack_gui('LabFrame', 'Results', 'bisul_res_l', \$page_bisul_seqf);
@@ -1603,6 +1639,8 @@ pack_gui('LabFrame', 'Options', 'qprimer_options_l', \$page_qpcrf);
 		pack_gui('Checkbutton', 'Exclude %GC', 'qexclude_gc', \$exclude_gc);
 		pack_gui('Checkbutton', 'GC clamp', 'qgc_clamp', \$exclude_clamp);
 	nr();
+		pack_gui('Checkbutton', 'Span intron/exon boundary', 'qie_span', \$ie_span);
+	nr();
 		pack_gui('Checkbutton', 'Overlap intron/exon boundary by', 'qie_overlap', \$ie_overlap);
 		pack_gui('Entry', \$exclude_ie, 'qexclude_ie', 3);
 		pack_gui('Label', 'bases');
@@ -1610,11 +1648,13 @@ pack_gui('LabFrame', 'Options', 'qprimer_options_l', \$page_qpcrf);
 pack_gui('LabFrame', 'Genomic sequence', 'qdna_seq_l', \$page_qpcrf);
 	nr(\$packed_widgets{qdna_seq_l});
 	pack_gui('Text', '', 'qdna_seq', 25, 6, -scrollbars=>'oe');
+	pack_menu('qdna_seq');
 	pack_osc_buttons('qdna_seq');
 		
 pack_gui('LabFrame', 'mRNA sequence', 'qmrna_seq_l', \$page_qpcrf);
 	nr(\$packed_widgets{qmrna_seq_l});
 	pack_gui('Text', '', 'qmrna_seq', 25, 6, -scrollbars=>'oe');
+	pack_menu('qmrna_seq');
 	pack_osc_buttons('qmrna_seq');
 
 pack_gui('LabFrame', 'Results', 'qpcr_res_l', \$page_qpcrf);
@@ -1865,18 +1905,6 @@ sub read_sock {
 # the job done, keeps things consistent, and writing new gui code (eg, the
 # preferences dialogue) is a matter of minutes to do ...
 
-# sub nr {
-	# # New row signal
-	# my ($reference, $pady, $fill) = @_;
-	# 
-	# $reference ||= $old_reference;
-	# $pady = $frame_pady unless defined($pady);
-	# $fill ||= 'x';
-		# 
-	# push @row_counter, $$reference->Frame(
-			# )->pack(-side=>'top', -anchor=>'nw', -pady=>$pady, -padx=>2, -fill=>$fill, -expand=>1);
-	# $old_reference = $reference;
-# }
 
 sub nr {
 	# New row signal
@@ -2077,6 +2105,12 @@ sub pack_osc_buttons {
 	$Balloon->attach($packed_widgets{"$widget_name clear"}, -balloonposition => 'mouse', -balloonmsg => "Clear sequence");
 }
 
+sub pack_menu {
+	my $name = shift;
+	$packed_widgets{$name}->menu(undef);
+	$packed_widgets{$name}->bind('<3>', \&menu_text);
+}
+
 sub canvas_buttons {
 	my ($widget_ref, $widget_name) = @_;
 	
@@ -2101,6 +2135,7 @@ sub bind_canvas {
 	$$widget_ref->CanvasBind('<Control-1>' => sub {amplicon_drag($Tk::event->x, $widget_ref)});
 	$$widget_ref->CanvasBind('<3>' => sub {dna_magnify($Tk::event->x)});
 	$$widget_ref->CanvasBind('<Control-3>', \&draw_dna);
+	$$widget_ref->CanvasBind('<Configure>' => \&draw_dna);
 }
 
 #---------------------#
@@ -2135,9 +2170,10 @@ sub update_title {
 		if ($open_file{$nb_page} eq 'File not saved') {
 			$top->configure(-title=>"PerlPrimer v$version");
 			return;
+		} else {
+			my $file = $open_file{$nb_page};
+			$top->configure(-title=>"PerlPrimer v$version - $file");
 		}
-		my $file = $open_file{$nb_page};
-		$top->configure(-title=>"PerlPrimer v$version - $file");
 	}
 	return;
 }
@@ -2282,6 +2318,9 @@ sub primer_window {
 			}
 		}
 	}
+	
+	return unless defined($seqbound5) && defined($seqbound3);
+
 		
 	for my $i ($seqbound5 .. $seqbound3) {
 		for my $primer_win ($$pri_win_min .. $$pri_win_max) {
@@ -2508,10 +2547,12 @@ sub calc_amplicon {
 				
 				#check amp range spans i/e boundary
 				my $qpcr_check=0;
-				foreach my $i (@intron_exon_bounds) {
-					$qpcr_check=1 if $pos_f<$i && $i<$realpos_r
+				if ($ie_span) {
+					foreach my $i (@intron_exon_bounds) {
+						$qpcr_check=1 if $pos_f<$i && $i<$realpos_r
+					}
+					next unless $qpcr_check==1;
 				}
-				next unless $qpcr_check==1;
 				
 				#check at least one primer falls across i/e boundary
 				$qpcr_check=0;
@@ -2781,8 +2822,10 @@ sub clean_seq {
 	$_ = shift;
 	my $nb_page = which_nb_page();
 	
-	s/\>(.*\n)//g; #remove FASTA formatting if it exists
-	if ($1 && $open_file{$nb_page} eq "File not saved") {
+	my ($fasta_name) = /^\s*>(.*\n)/;
+	s/^\s*>(.*\n)//g; #remove FASTA formatting if it exists
+	# print "name = $fasta_name\n";
+	if ($fasta_name && $open_file{$nb_page} eq "File not saved") {
 		# if FASTA details are present ...
 		my $name = format_file_name($1);
 		
@@ -3329,6 +3372,7 @@ sub get_tm {
 	# print "fprimer was $fprimer; check was $check\n";
 	if ($fprimer && !check_degenerate($fprimer, 1)) {
 		($fprimer_tm, $deltaH, $deltaS) = tm($fprimer);
+		$fprimer_gc = int(gc($fprimer));
 		$fprimer_tm = sprintf("%.2f", $fprimer_tm);
 		
 		# since dG = dH - TdS, we don't need to calculate based on NN's ...
@@ -3342,6 +3386,7 @@ sub get_tm {
 	
 	if ($rprimer && !check_degenerate($rprimer, 1)) {
 		($rprimer_tm, $deltaH, $deltaS) = tm($rprimer);
+		$rprimer_gc = int(gc($rprimer));
 		$rprimer_tm = sprintf("%.2f", $rprimer_tm);
 		
 		$deltaG = $deltaH-((273.15+$pd_temperature)*($deltaS/1000));
@@ -4457,7 +4502,7 @@ sub blast {
 	
 	unless ($local_blast) {
 		# Standard NCBI server blast over http
-		my $blast_put = "http://www.ncbi.nlm.nih.gov/blast/Blast.cgi?QUERY=$query&DATABASE=$blast_database&ENTREZ_QUERY=($blast_entrez_query)&EXPECT=$blast_expect&FORMAT_TYPE=Text&PROGRAM=blastn&SERVICE=plain&CMD=Put";		
+		my $blast_put = "http://www.ncbi.nlm.nih.gov/blast/Blast.cgi?QUERY=$query&DATABASE=$blast_database&ENTREZ_QUERY=($blast_entrez_query)&EXPECT=$blast_expect&WORD_SIZE=$blast_word_size&FORMAT_TYPE=Text&PROGRAM=blastn&SERVICE=plain&CMD=Put";		
 				
 		# send off the query
 		$_ = http_get($blast_put);
@@ -4476,7 +4521,7 @@ sub blast {
 		# know of to use non-blocking, sleeping subroutines without forks - which we
 		# can't use with ActivePerl for Win32 :(	
 		$flag=undef;
-		$blast_count = 0;
+		$blast_count = time();
 		$rptid = $top->repeat(15000, \&blast_wait);
 		$blast_d->waitVariable(\$flag);
 		# $blast_d->afterCancel($rptid);
@@ -4495,8 +4540,7 @@ sub blast {
 		print PRIMER $query;
 		close (PRIMER);
 		
-		my $local_blast_command = $local_blast_directory."blastall -p blastn -d $local_blast_database -i $tmp.primer_tmp";
-		# print "executing $local_blast_command\n";
+		my $local_blast_command = $local_blast_directory."blastall -p blastn -d $local_blast_database -W $blast_word_size -i $tmp.primer_tmp";
 		$_ = `$local_blast_command`;
 		
 		# delete tmp file
@@ -4515,7 +4559,7 @@ sub blast {
 	my ($blast_header, $blast_summary) = ($1,$2);
 	
 	# search for each sequence identifier and find corresponding blast entry
-	while (/^(\w*\|[\w\|\.\d]+)/mg) {
+	while (m/^(\w*\|[\w\|\.\d]+)/mg) {
 			my $found_result = $1;
 			if ($blast_out =~ /\n\>(\Q$found_result\E.*?Length = \d*)[\n\s]*(Score = .*?Strand = \w* \/ \w*)[\n\s]*(Query.*?Sbjct.*?)\n/s) {
 				push @blast_results_1, $1;
@@ -4530,13 +4574,10 @@ sub blast {
 
 sub blast_wait {
 	#print "Waiting for server response ...\n";
-	$blast_count++;
-	my $seconds = $blast_count*15;
-	my $seconds_remainder = $seconds % 60;
-	my $minutes = ($seconds-$seconds_remainder)/60;
-	$seconds_remainder = "00" if $seconds_remainder == 0;
+	my $time_now = time();
+	my $time = convert_time($time_now-$blast_count);
 	
-	$blast_status = "Waiting for server response ... $minutes:$seconds_remainder elapsed";
+	$blast_status = "Waiting for server response ... $time elapsed";
 	$top->update;
 
 	# print "status: $blast_status\n";
@@ -4548,6 +4589,20 @@ sub blast_wait {
 		# print "output was $_\n";
 	}
 }
+
+sub convert_time {
+	my ($time) = @_;
+	
+	my $seconds = $time % 60;
+	my $minutes_total = ($time-$seconds)/60;
+	# my $minutes = $minutes_total % 60;
+	# my $hours = ($minutes_total-$minutes)/60;
+	
+	my $time_readable = sprintf("%02d:%02d", $minutes_total, $seconds);
+	
+	return $time_readable;
+}
+
 
 
 #------------------#
@@ -4614,19 +4669,20 @@ sub fetch_ensembl {
 	my $name;
 	my %ids;
 	my $count=0;
-	while (/Ensembl Gene: \<\/[bB]\>\<[aA].*?\>(.*?)\<.*?\<br \/\>(.*?)\.\s*\[/mg) {
+	while (m/Ensembl Gene: \<\/[bB]\>\<[aA].*?\>(.*?)\<.*?\<br \/\>(.*?)\s*\[/mg) {
 		$gene_id = $1;
 		$name = $2;
+		# print "($name, $gene_id)\n";
 		$name =~ s/\<.*?\>//g;
 		push @gene_names, $name;
 		$ids{$name}=$gene_id;
 		$count++;
 	}
 	
-	if ($count>1) {
-		# multiple/ambiguous matches
+	if ($count) {
+		# multiple/ambiguous matches - now displays full gene name regardless
 		@gene_names = sort(@gene_names);
-		my $ensembl_mm = $top->Toplevel(-title=>"More than one match found ...");
+		my $ensembl_mm = $top->Toplevel(-title=>"Select gene of interest ...");
 		my $ensembl_mm_f = $ensembl_mm->Frame()->pack(-fill=>'both', -pady=>7);
 		my $ensembl_mm_fb = $ensembl_mm->Frame()->pack(-side=>'bottom', -fill=>'none');
 		nr(\$ensembl_mm_f);		
@@ -4662,6 +4718,7 @@ sub fetch_ensembl {
 			return;
 		} else {
 			dialogue("Unable to find gene_id in response from server");
+			# print "output was\n$_\n";
 		}
 		
 		return;
@@ -4735,7 +4792,10 @@ sub http_get {
 
 	my $response = $ua->request($req);
 	if ($response->is_error) {
-		dialogue("Error: HTTP request unsuccessful");
+		my $code = $response->code;
+        	my $message = $response->message;
+				
+		dialogue("Error: $code $message");
 		return " ";
 	}
 	
@@ -5479,6 +5539,9 @@ sub prefs {
 			pack_gui('Label', 'Expect value: ', "prefs_blast_expect");
 			pack_gui('Entry', \$blast_expect, "prefs_blast_expect", 4);
 		nr();
+			pack_gui('Label', 'Word size: ', "prefs_blast_wordsize");
+			pack_gui('Entry', \$blast_word_size, "prefs_blast_wordsize", 4);
+		nr();
 			pack_gui('Radiobutton', "Use remote BLAST server", 'remote_blast_r', -variable=>\$local_blast, -value=>0);
 			pack_gui('Radiobutton', "Use local BLAST server", 'remote_blast_r', -variable=>\$local_blast, -value=>1);
 		nr('', 7);
@@ -5613,7 +5676,7 @@ sub prefs {
 				my $answer = dialogue("Setting [dNTPs] > [Mg++] will have unexpected results - Tm calculations may be inaccurate", 'OK', 'Cancel');
 				return if $answer eq 'Cancel';
 			}
-	
+				
 			# if the salt concentration has been changed, we need to recalculate %oligo_dG
 			recalculate_dG();
 			
@@ -5627,7 +5690,7 @@ sub prefs {
 				my $pointer = $pref_arrays{$i};
 				$file_data .= "$i = [".join(",",@$pointer)."]\n";
 			}
-			open (PREFS, ">$pref_file") || dialogue("Could not open file: $!");
+			open (PREFS, ">$pref_file") || dialogue("Error: Could not open prefs file for writing: $!");
 			print PREFS $file_data;
 			close (PREFS);
 			
@@ -5659,7 +5722,7 @@ sub prefs {
 
 sub read_prefs {
 	return unless -e $pref_file;
-	open (PREFS, "<$pref_file") || dialogue("Could not open prefs file for reading: $!");
+	open (PREFS, "<$pref_file") || dialogue("Error: Could not open prefs file for reading: $!");
 	my $pointer;
 	while (<PREFS>) {
 		s/[\n\r]//g;
@@ -5938,8 +6001,8 @@ sub draw_dna {
 	my $old_defer = $defer_to_caps; # save state
 	$defer_to_caps = 1 if @_ && $_[0] == 1;
 	
-	my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p, $canvas) 
-		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p canvas)); 
+	my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p, $hlist, $slist, $canvas) 
+		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p hlist primers canvas)); 
 
 	my $seq = get_seq();
 	return unless $seq =~ /[a|t|c|g]/i;
@@ -5995,6 +6058,41 @@ sub draw_dna {
 			my $iex = $i * $dna_canvas_size + $dna_canvas_offset;
 			$$canvas->createLine($iex, $dc_dna_y1, $iex, $dc_dna_y2, -fill=>'white', -tag=>'ie_boundary');
 		}
+	}
+		
+	my @sel = $$hlist->selectionGet;
+	my $hlist_sel = shift @sel;
+	
+	if (defined($hlist_sel)) {
+	
+		# my $width = $$canv->width;
+		# my $height= $$canv->height;
+		# my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
+		
+		$$canvas->delete('primerf','primerr');
+		
+		my $fprimerpos = $$slist[$hlist_sel][1];
+		my $rprimerpos = $$slist[$hlist_sel][8];
+		
+		my $fprimerposl = $$slist[$hlist_sel][2];
+		my $rprimerposl = $$slist[$hlist_sel][6];
+		
+		my ($fprimer_x1,$fprimer_x2,$rprimer_x1,$rprimer_x2);
+		if (defined($fprimerpos)) {
+			$fprimer_x1 = $fprimerpos*$dna_canvas_size + $dna_canvas_offset;
+			$fprimer_x2 = ($fprimerpos+$fprimerposl)*$dna_canvas_size + $dna_canvas_offset;
+		}
+		
+		if (defined($rprimerpos)) {
+			$rprimer_x1 = $rprimerpos*$dna_canvas_size + $dna_canvas_offset;
+			$rprimer_x2 = ($rprimerpos-$rprimerposl)*$dna_canvas_size + $dna_canvas_offset;
+		}
+		
+		my $line_arrow_h = 4;
+		my $line_arrow_w = 4;
+		
+		$$canvas->createLine($fprimer_x1,$dc_sel_y1,$fprimer_x2,$dc_sel_y1,$fprimer_x2-$line_arrow_w,$dc_sel_y1-$line_arrow_h, -fill=>'red', -width=>2, -tag=>'primerf') if $fprimerpos;
+		$$canvas->createLine($rprimer_x1,$dc_sel_y2,$rprimer_x2,$dc_sel_y2,$rprimer_x2+$line_arrow_w,$dc_sel_y2+$line_arrow_h, -fill=>'red', -width=>2, -tag=>'primerr') if $rprimerpos;
 	}
 	
 	$defer_to_caps = $old_defer; # restore state
@@ -7075,8 +7173,8 @@ sub save_seq {
 			# open description window
 			my $descript_w = $top->Toplevel(-title=>'Enter FASTA description line');
 			nr(\$descript_w);
-			pack_gui('',$description, 'description_text', '', 35);
-			pack_gui('OK', sub {$descript_w->destroy}, 'description_ok', '', 'b', 'active');
+			pack_gui('Entry',\$description, 'description_text', 35);
+			pack_gui('Button', 'OK', 'description_ok', sub {$descript_w->destroy}, 'active');
 			$descript_w->Icon(-image => $pixmap);
 			$descript_w->grab;
 			$descript_w->waitWindow;
