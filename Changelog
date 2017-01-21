@@ -1,3 +1,6 @@
+18/10/06  (PerlPrimer-1.1.14)
+- Ensembl compatibility restored once again (slight change in the searchview output was causing problems)
+
 22/6/06  (PerlPrimer-1.1.13)
 - Ensembl compatibility restored again (back to searchview)
 - Added code to check for the presence of Genomic and mRNA seqs before running spidey (error message that resulted otherwise was confusing to users)

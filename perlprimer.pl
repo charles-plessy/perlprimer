@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.13 (22/6/2006)
+# version 1.1.14 (22/6/2006)
 # Copyright © 2003-2006, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.13";
+	$version = "1.1.14";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -372,21 +372,29 @@ my @ensembl_species = split("\n",
 "Homo_sapiens
 Mus_musculus
 -------------------
+Aedes_aegypti
 Anopheles_gambiae
 Apis_mellifera
 Bos_taurus
 Caenorhabditis_elegans
 Canis_familiaris
 Ciona_intestinalis
+Ciona_savignyi
 Danio_rerio
+Dasypus_novemcinctus
 Drosophila_melanogaster
-Fugu_rubripes
+Echinops_telfairi
 Gallus_gallus
+Gasterosteus_aculeatus
+Loxodonta_africana
 Macaca_mulatta
 Monodelphis_domestica
+Oryctolagus_cuniculus
+Oryzias_latipes
 Pan_troglodytes
 Rattus_norvegicus
 Saccharomyces_cerevisiae
+Takifugu_rubripes
 Tetraodon_nigroviridis
 Xenopus_tropicalis");
 
@@ -4714,8 +4722,8 @@ sub fetch_ensembl {
 		
 	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
 	# Here, we scrape both genes and associated transcripts from the server:
-	while (m/Ensembl gene ([\w\d]+) .*?:(.*?)<br \/>(.*?)<br \/>/mg) {
-		my ($gene_id, $transcripts, $name) = ($1, $2, $3);
+	while (m/Ensembl ([\w_].*?) gene ([\w\d]+) .*?:(.*?)<br \/>(.*?)<br \/>/mg) {
+		my ($gene_id, $transcripts, $name) = ($2, $3, $4);
 		$name ||= "$gene_id: no description available";
 		my @enst;
 		while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
