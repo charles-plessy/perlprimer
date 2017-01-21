@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.20 (17 Feb 2011) 
+# version 1.1.21 (21 Nov 2011) 
 # Copyright © 2003-2011, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -18,7 +18,7 @@
 # 
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301
 # USA
 
 use strict;
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.20";
+	$version = "1.1.21";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -3902,7 +3902,15 @@ sub find_re_sites {
 		# search for the file in the program directory
 		@gcg_paths = glob("$program_directory"."gcg.*");
 	}
-	
+	unless (@gcg_paths) {
+		# search for the file where it should be
+		@gcg_paths = glob("/usr/share/perlprimer/"."gcg.*");
+	}
+	unless (@gcg_paths) {
+		# search for the file in the current directory
+		@gcg_paths = glob("./"."gcg.*");
+	}
+
 	my $gcg_path;
 	foreach (@gcg_paths) {
 		if (/.*gcg\.\d*$/) {
@@ -4761,8 +4769,8 @@ sub fetch_ensembl {
 	}
 	
 	# Search for the gene:
-	# New search method as of v1.1.18 (modified in 1.1.20)
-	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Lucene/Details?species=$ensembl_organism;idx=Gene;end=2;q=$ensembl_gene");
+	# New search method as of v1.1.18 (modified in 1.1.20, and again in 1.1.21 thanks to Nick Kennedy)
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;end=2;q=$ensembl_gene");
 	#$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
 	#print "http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene\n";
 		
@@ -4796,10 +4804,10 @@ sub fetch_ensembl {
 		#~ $ids{$name}=[$gene_id, $href];
 	#~ }
 	
-	# As of 02/2011, Ensembl has changed formats again, leading to a slightly different parsing ...
+	# As of 02/2011, Ensembl has changed formats again, leading to a slightly different parsing ... and again for version 1.1.21
 	
 	# Find genes and gene_ids
-	while (m/\<div class=\"hit\"\>.*?href=\"(.*?)\".*?strong\>(.*?)\W*\<.*?\[(.*?): (.*?) ].*?Description.*?td\>\W*(.*?)\W*\</sg) {
+	while (m/\<div class=\"hit\"\>.*?href=\"(.*?)\".*?strong\>(.*?)\W*\<.*?\[(.*?): (.*?) ].*?Description.*?dd\>\W*(.*?)\W*\</sg) {
 		my ($href, $name, $gene_type, $gene_id, $gene_des) = ($1, $2, $3, $4, $5);
 		#print "($href, $gene_type, $gene_id, $name, $gene_des)\n\n";
 		$name .= " -- $gene_des";
@@ -4841,12 +4849,12 @@ sub fetch_ensembl {
 		return if $cancel;
 	}
 	
-	# Having selected the gene, we can now get the transcripts ...
+	# Having selected the gene, we can now get the transcripts ... (parsing changed for 1.1.21)
 	if ($name && ($ids{$name}[1])) {
 		 $_ = http_get("http://www.ensembl.org/$ids{$name}[1]");
 		 #print "$_\n";
 		 my ($transcripts) = m/id="transcripts"(.*?)\/table/sg;
-		 while ($transcripts =~ m/\/Summary\?.*?t=([\w\d\.]+).*?<td>.*?<td>.*?<td>([\d\-]+).*?<td>.*?>([\w\s]+)</sg) {
+		 while ($transcripts =~ m/\/Summary\?.*?t=([\w\d\.]+).*?<td.*?>.*?<td.*?>.*?<td.*?>([\d\-]+).*?<td.*?>.*?>([\w\s]+)</sg) {
 			#print "$1 $2 $3\n";
 			push @enst, $1;
 			if ($2 eq '-') {
@@ -4955,7 +4963,7 @@ sub fetch_ensembl {
 }
 
 sub convert_ensembl {
-	# argument to http address converter
+	# argument to http address converter (addresses changed for 1.1.21)
 	my ($ensembl_organism,$transcript,$ensembl_type,$export_type) = @_;
 	$export_type||='Transcript';
 	
@@ -4966,10 +4974,10 @@ sub convert_ensembl {
 	# Thanks to Karl Kashofer for the following fix ...
 	# for genomic retrieval we need to append "genomic=unmasked"
 	if ($ensembl_type eq 'genomic') {
-		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;param=$ensembl_type;genomic=unmasked;_format=Text";
+		my $address = "http://www.ensembl.org/$ensembl_organism/Export/Output/Transcript?output=fasta;db=core;t=$transcript;param=$ensembl_type;genomic=unmasked;_format=Text";
 		return $address;
 	} else {
-		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;param=$ensembl_type;_format=Text";
+		my $address = "http://www.ensembl.org/$ensembl_organism/Export/Output/Transcript?output=fasta;db=core;t=$transcript;param=$ensembl_type;_format=Text";
 		return $address;
 	};
 }
@@ -5530,6 +5538,9 @@ Richard Saffery
 Nick Wong
 Karl Billeter
 Steffen Moeller
+Karl Kashofer
+Henning Lenz
+Nick Kennedy
 EOT
 	
 	$packed_widgets{ack_text}->insert('0.1', "Restriction enzyme data\n\n", 'bold');
@@ -5544,7 +5555,7 @@ EOT
 	$packed_widgets{ack_text}->insert('end', "\n\nBisulphate PCR primer design\n\n", 'bold');
 	$packed_widgets{ack_text}->insert('end', $text_cpg);
 	
-	$packed_widgets{ack_text}->insert('end', "\n\nSpecial thanks for comments, testing and suggestions\n(in no particular order)\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('end', "\n\nSpecial thanks for comments, testing, suggestions and bugfixes\n(in no particular order)\n\n", 'bold');
 	$packed_widgets{ack_text}->insert('end', $text_thanks);
 	
 	# icon	
