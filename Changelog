@@ -1,7 +1,11 @@
+22/6/06  (PerlPrimer-1.1.13)
+- Ensembl compatibility restored again (back to searchview)
+- Added code to check for the presence of Genomic and mRNA seqs before running spidey (error message that resulted otherwise was confusing to users)
+
 5/6/06  (PerlPrimer-1.1.12)
 - Retrieval of un-annotated genes from Ensembl (using the Ensembl Gene ID) is now possible
 - BLAST search results compatibility restored
-- ORF calculation re-written to allow for transciption initiation from TTG, GTG and CTG codons, in the absence of an initiating ATG.
+- ORF calculation re-written to allow for transciption initiation from TTG, GTG and CTG codons, in the absence of an initiating ATG
 
 31/5/06  (PerlPrimer-1.1.11)
 - Ensembl compatibility restored yet again (Ensembl now apparently back to using a modified text view rather than searchview)

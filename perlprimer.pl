@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.12 (5/6/2006)
+# version 1.1.13 (22/6/2006)
 # Copyright © 2003-2006, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.12";
+	$version = "1.1.13";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -3998,8 +3998,19 @@ sub run_spidey {
 	my $spidey_command = "\"$spidey_exec\" -i \"$tmp.dna_tmp\" -m \"$tmp.mrna_tmp\" -p $print_alignment";
 		
 	my $mrna_seq = $packed_widgets{"qmrna_seq"}->get(0.1,"end");
-	my $dna_seq = $packed_widgets{"qdna_seq"}->get(0.1,"end");
+	unless (length(clean_seq($mrna_seq))) {
+		dialogue("Error: Please enter an mRNA sequence\n");
+		$cancel=1;
+		return;
+	}
 	
+	my $dna_seq = $packed_widgets{"qdna_seq"}->get(0.1,"end");
+	unless (length(clean_seq($dna_seq))) {
+		dialogue("Error: Please enter a DNA sequence\n");
+		$cancel=1;
+		return;
+	}
+		
 	# Spidey will only accept input as files, so we need to move the two
 	# sequences to temporary files
 	unless (open (MRNA, ">".$tmp.".mrna_tmp")) {
@@ -4028,8 +4039,14 @@ sub run_spidey {
 		
 	# abort and complain if we don't see the --SPIDEY signature
 	unless (/--SPIDEY/) {
-		dialogue("Error: Cannot run Spidey executable correctly\n(Please check the console for error messages)");
-		sbarprint("\nCancelled - Spidey executable not found");
+		print "$_\n";
+		if (m/no valid bioseqs(.*)/i) {
+			dialogue("Error: No valid bioseqs$1\n\n(If all sequences are present, this may mean that the temp directory is incorrectly set in the preferences - please make sure that this directory is writable)");
+			sbarprint("\nCancelled - No valid bioseqs$1");
+		} else {	
+			dialogue("Error: Cannot run Spidey executable correctly\n(Please check the console for error messages)");
+			sbarprint("\nCancelled - Spidey executable not found");
+		}	 
 		$cancel=1;
 		return;
 	}
@@ -4680,7 +4697,10 @@ sub fetch_ensembl {
 	
 	# As of 04/2006, Ensembl uses "textview" again.  Various unprintable expletives come
 	# mind at this point, all directed towards the developers of the Ensembl web structure ...
-	$_ = http_get("http://www.ensembl.org/$ensembl_organism/textview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
+	
+	# ... and as of 06/2006, Ensembl is back to "searchview"!  Worse, textview works (thereby removing
+	# my supposedly failsafe error message) but returns no matches.  Sheesh ...
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
 		
 	s/<\/*span.*?>//g; # rip out highlight spans
 	s/<\/*font.*?>//g; # rip out font spans
