@@ -1,3 +1,17 @@
+20/3/06  (PerlPrimer-1.1.10)
+- Ensembl compatibility yet again restored
+- Button in Ensembl transcripts dialogue to allow user to open a browser
+window to view the different transcripts (on the Ensembl gene web page)
+- Option in Preferences->Network to specify web browser to use (may not work
+under Win32 - seems to use default system browser regardless)
+- List of Ensembl genome databases updated
+- Translation from forward primer to ORF start is now shown in a lighter
+colour
+- Active buttons in dialogues are now invoked by pressing <Return>
+- Update to checkbutton referencing code to support later versions of Perl/Tk
+under *nix
+- Slight cosmetic changes to GUI colours
+
 8/9/05 (PerlPrimer-1.1.9)
 - Ensembl compatibility restored once again
 - Slight change to Spidey error dialogue to reflect the possibility that the error might be Ensembl-related

@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.9 (8/9/2005)
+# version 1.1.10 (21/3/2005)
 # Copyright © 2003-2005, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.9";
+	$version = "1.1.10";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -39,7 +39,7 @@ BEGIN {
 PerlPrimer v$version
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-Copyright © 2003-2005 Owen Marshall\n
+Copyright © 2003-2006 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
@@ -49,7 +49,7 @@ EOT
 	if ($win_exe) {
 		print <<EOT;
 PerlPrimer v$version 
-Copyright © 2003-2005 Owen Marshall
+Copyright © 2003-2006 Owen Marshall
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
 This window is required for PerlPrimer to run - 
@@ -262,11 +262,12 @@ my %default_variables = (
 # things such as widget spacing, most notably the checkbuttons)
 my $HOME = $ENV{HOME} || $ENV{HOMEPATH}; # HOMEPATH may not work correctly on Win32 ...
 my $tmp = $ENV{TEMP} || $ENV{TMP};
-my ($dir_sep, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
+my ($dir_sep, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady, $browser);
 
 if ($^O =~ /mswin/i) {
 	# MS Windows OS
 	$os = 'win';
+	$browser = 'c:\Program Files\Internet Explorere\iexplore';
 	$HOME ||= 'c:\\'; # only if not set by $ENV above
 	$tmp ||= 'c:\temp\\'; # only if not set by $ENV above
 	$dir_sep = '\\';
@@ -285,6 +286,7 @@ if ($^O =~ /mswin/i) {
 } else {
 	# *nix OS
 	$os = 'nix';
+	$browser = 'firefox';
 	$HOME ||= (getpwuid($<))[7].'/'; # only if not set above
 	$tmp = '/tmp/'; # only if not set above
 	$dir_sep = '/';
@@ -372,13 +374,16 @@ Mus_musculus
 -------------------
 Anopheles_gambiae
 Apis_mellifera
-Canis_familiaris
+Bos_taurus
 Caenorhabditis_elegans
+Canis_familiaris
 Ciona_intestinalis
-Drosophila_melanogaster
 Danio_rerio
+Drosophila_melanogaster
 Fugu_rubripes
 Gallus_gallus
+Macaca_mulatta
+Monodelphis_domestica
 Pan_troglodytes
 Rattus_norvegicus
 Saccharomyces_cerevisiae
@@ -502,7 +507,7 @@ Full dimer dG");
 my $scroll_factor = 2;
 
 # Win32 only - for button pre-lights
-my $activebackground_color="#ececec";
+my $activebackground_color="#ffffff";
 
 # Spidey details
 my (%spidey_exec);
@@ -512,7 +517,7 @@ my $spidey_path = "$HOME";
 my @spidey_files = glob("$program_directory*pidey.*");
 @spidey_files = glob("$program_directory*pidey*") unless @spidey_files;
 if (@spidey_files) {
-	$spidey_path = $program_directory;
+	$spidey_path = "$program_directory";
 }
 
 # my $spidey_out;
@@ -694,6 +699,7 @@ my %arrays = (
 # Hash for opening/saving prefs
 my %pref_variables = (
 	# home => \$HOME,
+	browser => \$browser,
 	tmp => \$tmp,
 	spidey_path => \$spidey_path,
 	repeats => \$repeat,
@@ -1326,6 +1332,7 @@ pack_gui('LabFrame', 'Dimers', 'dim_l', \$page_primerf);
 	pack_gui('ROText', 'Dimers', 'dim', 60, 15, -scrollbars=>'oe');
 		$packed_widgets{dim}->bind('<Key-Right>' => \&jump_to_tm);
 		$packed_widgets{dim}->bind('<Key-Left>' => \&jump_back);
+		$packed_widgets{dim}->bind('<Return>' => \&jump_back);
 
 nr(\$page_primerfb, 0);
 	pack_gui('Button', 'Calculate Tm', 'tmbutton', \&get_tm, 'active');
@@ -1966,7 +1973,7 @@ sub pack_gui {
 			my ($variable, @widget_args) = @args;
 			$$widget_ref = $top_reference->$widget_type(
 					-text=>$textvariable,
-					-variable=>\$variable,
+					-variable=>$variable,
 					-onvalue=>1,
 					-offvalue=>0,
 					@widget_args,
@@ -1997,6 +2004,13 @@ sub pack_gui {
 					-default=>$default,
 					@widget_args,
 				)->pack(-side=>'left', -anchor=>'w', -pady=>$button_pack_pady, -padx=>$button_pack_padx);
+			
+			# bind return to default button
+			if ($default eq 'active') {
+				my $parent = $$old_reference->parent;
+				$parent->bind('<Return>' => sub{$$widget_ref->invoke()});
+			}
+			
 			last; };
 			
 		/^LabFrame/ && do {
@@ -2835,6 +2849,8 @@ sub clean_seq {
 	
 	s/[\s\n\r]//g; #remove spaces/new lines
 	s/-//g; #remove gaps in sequence
+	s/\d//g; #remove digits
+	
 	return $_;
 }
 		
@@ -3979,8 +3995,8 @@ sub run_spidey {
 	my $largest = (sort {$b <=> $a} keys %sizes_names)[0];
 	my $spidey_exec = $sizes_names{$largest};
 	
-	my $spidey_command = "$spidey_exec -i \"$tmp.dna_tmp\" -m \"$tmp.mrna_tmp\" -p $print_alignment";
-
+	my $spidey_command = "\"$spidey_exec\" -i \"$tmp.dna_tmp\" -m \"$tmp.mrna_tmp\" -p $print_alignment";
+		
 	my $mrna_seq = $packed_widgets{"qmrna_seq"}->get(0.1,"end");
 	my $dna_seq = $packed_widgets{"qdna_seq"}->get(0.1,"end");
 	
@@ -4006,7 +4022,7 @@ sub run_spidey {
 	sbarprint("\nRunning spidey ...");
 	$_ = `$spidey_command`;
 	
-	# open(SPIDEY, "$spidey_command -p $_[0] |");
+	# open(SPIDEY, "$spidey_command |");
 	# $_ = join("",<SPIDEY>);
 	# close SPIDEY;
 		
@@ -4658,9 +4674,9 @@ sub fetch_ensembl {
 	
 	# Search for the gene:
 	
-	# Ensembl's textview cgi will work regardless of the species origin given in the
-	# address - the Homo_sapiens in the address will not limit the search.
-	$_ = http_get("http://www.ensembl.org/Homo_sapiens/textview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
+	# As of 03/2006, Ensembl now uses "searchview" rather than "textview", and the
+	# species delimiter is important; searchview does not seem to have a species argument
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?&idx=Gene&q=$ensembl_gene");
 	
 	# find the Ensembl gene ID, and count the number - if there's more than one
 	# we'll have to ask the user to be more specific
@@ -4668,7 +4684,7 @@ sub fetch_ensembl {
 	my @gene_names;
 	my $name;
 	my %ids;
-	
+		
 	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
 	# Here, we scrape both genes and associated transcripts from the server:
 	while (m/Ensembl gene ([\w\d]+) .*?:(.*?)\<br \/\>(.*?)\]/mg) {
@@ -4714,41 +4730,52 @@ sub fetch_ensembl {
 		return if $cancel;
 	}
 	
-	my $transcript = $ids{$name}[1];
-	
-	if ($#{ $ids{$name}} > 1) {
-		# multiple transcripts: ask user to select transcript ID
-		my @transcripts = @{ $ids{$name} }[1 .. $#{$ids{$name}}];
-		my $ensembl_mt = $top->Toplevel(-title=>"Please select transcipt ...");
-		my $ensembl_mt_f = $ensembl_mt->Frame()->pack(-fill=>'both', -pady=>7);
-		my $ensembl_mt_fb = $ensembl_mt->Frame()->pack(-side=>'bottom', -fill=>'none');
-		nr(\$ensembl_mt_f);		
-			pack_gui('Label', "Ensemble gene $ids{$name}[0] has ".($#transcripts+1)." transcript".($#transcripts > 0 ? 's' : '')." ...", "ensemble_mt_d_note");
-		nr();
-			pack_gui('BrowseEntry', \$transcript, 'ensembl_mt_d_genes', \@transcripts, 20);
-		
-		my $cancel=1;
-		nr(\$ensembl_mt_fb);
-		pack_gui('Button', 'OK', 'ensembl_ok', sub {
-				$cancel=undef;
-				$ensembl_mt->destroy;
-			}, "active");
-		pack_gui('Button', 'Cancel', 'ensembl_cancel', sub {
-				$ensembl_mt->destroy;
-			});
-		
-		$ensembl_mt->Icon(-image => $pixmap);
-		
-		# (we need it to freeze execution at this point, since the user may
-		# wish to cancel and refine their choice)
-		$ensembl_mt->waitWindow;
-		return if $cancel;
+	my $transcript;
+	if (%ids) {
+		$transcript = $ids{$name}[1];
+		if ($#{ $ids{$name}} > 1) {
+			# multiple transcripts: ask user to select transcript ID
+			my @transcripts = @{ $ids{$name} }[1 .. $#{$ids{$name}}];
+			my $ensembl_mt = $top->Toplevel(-title=>"Please select transcipt ...");
+			my $ensembl_mt_f = $ensembl_mt->Frame()->pack(-fill=>'both', -pady=>7);
+			my $ensembl_mt_fb = $ensembl_mt->Frame()->pack(-side=>'bottom', -fill=>'none');
+			nr(\$ensembl_mt_f);		
+				pack_gui('Label', "Ensemble gene $ids{$name}[0] has ".($#transcripts+1)." transcript".($#transcripts > 0 ? 's' : '')." ...", "ensemble_mt_d_note");
+			nr();
+				pack_gui('BrowseEntry', \$transcript, 'ensembl_mt_d_genes', \@transcripts, 20);
+			
+			my $cancel=1;
+			nr(\$ensembl_mt_fb);
+			pack_gui('Button', 'OK', 'ensembl_ok', sub {
+					$cancel=undef;
+					$ensembl_mt->destroy;
+				}, "active");
+			pack_gui('Button', 'Cancel', 'ensembl_cancel', sub {
+					$ensembl_mt->destroy;
+				});
+			pack_gui('Button', 'View transcripts', 'ensembl_view_transcripts', sub {
+					my $command = "\"$browser\" http://www.ensembl.org/$ensembl_organism/geneview?gene=$gene_id";
+					if ($os eq 'win') {
+						system "start $command";
+					} else {
+						system "$command &";
+					}
+				});
+			
+			
+			$ensembl_mt->Icon(-image => $pixmap);
+			
+			# (we need it to freeze execution at this point, since the user may
+			# wish to cancel and refine their choice)
+			$ensembl_mt->waitWindow;
+			return if $cancel;
+		}
 	}
 			
 	unless ($gene_id) {
 		# no matches
-		if (/Your query found no matches/) {
-			dialogue("Your query found no matches");
+		if (/Your query matched no entries/) {
+			dialogue("Your query matched no entries in the search database");
 		} elsif ($_ eq " ") {
 			# returned if response->is_error below
 			return;
@@ -5022,6 +5049,7 @@ sub hlist_command {
 	my ($hlist_ref, $slist) = get_variables(qw(hlist primers));
 	
 	my $nb_page = which_nb_page();
+	return unless ref($slist) eq 'ARRAY';
 	$stored_page = $nb_page;
 		
 	$fprimer = $$slist[$hlist_sel][0];
@@ -5443,7 +5471,7 @@ sub prefs {
 	my $prefs_page_cloning = $prefs_nb->add('cloning', -label=>'Cloning', -anchor=>'nw');
 	my $prefs_page_orfcpg = $prefs_nb->add('orfcpg', -label=>'CpG Islands', -anchor=>'nw');
 	my $prefs_page_dimers = $prefs_nb->add('dimers', -label=>'Dimers', -anchor=>'nw');
-	my $prefs_page_connection = $prefs_nb->add('connection', -label=>'Connection', -anchor=>'nw');
+	my $prefs_page_connection = $prefs_nb->add('connection', -label=>'Network', -anchor=>'nw');
 	my $prefs_page_gui = $prefs_nb->add('gui', -label=>'GUI', -anchor=>'nw');
 	
 	my $prefs_page_general_f = $prefs_page_general->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
@@ -5654,6 +5682,14 @@ sub prefs {
 			pack_gui('Label', '°C');
 		
 	nr(\$prefs_page_connection_f, 2);
+		nr();
+			pack_gui('Label', "Web browser", '', -font=>$gui_font_bold);
+		nr();
+			pack_gui('Label', 'Browser: ', 'prefs_connection_browser');
+			pack_gui('Entry', \$browser, 'prefs_connection_browser', 30);
+			my $open_browser = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_file, (\$browser, "Browser")])->pack(-side=>'left');
+
+		nr('', 7);
 		nr();
 			pack_gui('Label', "Proxy server", '', -font=>$gui_font_bold);
 		nr('',0);	
@@ -6652,6 +6688,9 @@ sub dna_magnify {
 	$$text_ref->tagConfigure('blue',
 		-foreground => 'midnightblue',
 		-background => '#cee3ee');
+	$$text_ref->tagConfigure('blue_utr',
+		-foreground => '#459ecc',
+		-background => '#dde8ee');
 	$$text_ref->tagConfigure('blue_cpg',
 		-foreground => 'royalblue',
 		-background => 'royalblue');
@@ -6668,6 +6707,12 @@ sub dna_magnify {
 	$$text_ref->tagConfigure('codon',
 		-foreground => 'black',
 		-background => 'grey81');
+	$$text_ref->tagConfigure('codon_utr',
+		-foreground => 'black',
+		-background => 'grey84');
+	$$text_ref->tagConfigure('codonbg',
+		-foreground => 'black',
+		-background => 'grey93');
 	$$text_ref->tagConfigure('orange',
 		-foreground => 'orange');
 	$$text_ref->tagConfigure('dodgerblue',
@@ -6741,18 +6786,35 @@ sub dna_magnify {
 		my ($start, $end)=($gene_array[$i][0],$gene_array[$i][1]);
 		
 		# if f_primer starts before ORF, translate from there up
+		my ($new_start, $new_peptide);
 		if ($fprimerpos && $fprimerpos < $start) {
 			my $start_mod = $start%3;
 			my $fprimer_mod = $fprimerpos%3;
-			my $new_start = $fprimerpos + ($start_mod-$fprimer_mod);
-			$start = $new_start;
+			$new_start = $fprimerpos + ($start_mod-$fprimer_mod);
+			# $start = $new_start;
 		}
 		
+		
 		$$text_ref->tagAdd('black', "3.$start", "3.$end");
+		$$text_ref->tagAdd('black', "3.$new_start", "3.$end") if $new_start;
 		if ($page eq 'bis') {
 			$peptide = "-"x($end-$start);
 		} else {
 			my ($j,$k)=(0,0);
+			if ($new_start) {
+				for ($j=$new_start; $j<$start; $j+=3) {
+					my $codon = uc(substr($seq, $j, 3));
+					my $aa = $genetic_code{$codon};
+					$aa ||= "X";
+					$new_peptide .= $aa."  ";
+					if ($k == 1) {
+						my $tend = $j+3;
+						$$text_ref->tagAdd('codon_utr', "3.$j", "3.$tend");
+					}
+					$k = 1 - $k;
+				}
+			}
+			
 			for ($j=$start; $j<$end; $j+=3) {
 				my $codon = uc(substr($seq, $j, 3));
 				my $aa = $genetic_code{$codon};
@@ -6765,11 +6827,14 @@ sub dna_magnify {
 				$k = 1 - $k;
 			}
 		}
+		
+		$start = $new_start if $new_start;
 		my $spacer=" "x($start-$prev_end);
 		$prev_end=$end;
 		$$text_ref->insert("4.0",$spacer);
 		
 		unless ($page eq 'bis') {
+			$$text_ref->insert("4.end",$new_peptide,'blue_utr') if $new_peptide;
 			$$text_ref->insert("4.end",$peptide,'blue');
 		} else {
 			$$text_ref->insert("4.end",$peptide,'blue_cpg');

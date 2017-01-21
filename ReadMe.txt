@@ -1,7 +1,7 @@
 PerlPrimer
 ----------
 
-Copyright © 2003-2005, Owen Marshall (owenjm@users.sourceforge.net)
+Copyright © 2003-2006, Owen Marshall (owenjm@users.sourceforge.net)
 
 
 Contents
