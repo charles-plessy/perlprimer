@@ -3,8 +3,8 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.17 (24 Mar 2009)
-# Copyright © 2003-2008, Owen Marshall
+# version 1.1.18 (9 Oct 2009)
+# Copyright © 2003-2009, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.17";
+	$version = "1.1.18";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -49,7 +49,7 @@ EOT
 	if ($win_exe) {
 		print <<EOT;
 PerlPrimer v$version 
-Copyright © 2003-2008 Owen Marshall
+Copyright © 2003-2009 Owen Marshall
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
 This window is required for PerlPrimer to run - 
@@ -87,7 +87,7 @@ BEGIN {
 			
 			# Print warning header if not already printed
 			unless ($warning) {
-				print "PerlPrimer v$version\nCopyright © 2003-2008 Owen Marshall\n\n";
+				print "PerlPrimer v$version\nCopyright © 2003-2009 Owen Marshall\n\n";
 				$warning = 1;
 			}
 			
@@ -371,32 +371,87 @@ my $ensembl_type = 'cdna';
 my @ensembl_species = split("\n",
 "Homo_sapiens
 Mus_musculus
--------------------
+Danio_rerio
+Drosophila_melanogaster
+Caenorhabditis_elegans
+Saccharomyces_cerevisiae
+
+---- Primates ----
+Otolemur_garnettii
+Pan_troglodytes
+Gorilla_gorilla
+Homo_sapiens
+Macaca_mulatta
+Callithrix_jacchus
+Microcebus_murinus
+Pongo_pygmaeus
+Tarsius_syrichta
+
+---- Rodents etc. ----
+Cavia_porcellus
+Dipodomys_ordii
+Mus_musculus
+Ochotona_princeps
+Oryctolagus_cuniculus
+Rattus_norvegicus
+Spermophilus_tridecemlineatus
+Tupaia_belangeri
+
+---- Laurasiatheria ----
+Vicugna_pacos
+Felis_catus
+Bos_taurus
+Canis_familiaris
+Tursiops_truncatus
+Erinaceus_europaeus
+Equus_caballus
+Pteropus_vampyrus
+Myotis_lucifugus
+Sus_scrofa
+Sorex_araneus
+
+---- Afrotheria ----
+Loxodonta_africana
+Procavia_capensis
+Echinops_telfairi
+
+---- Xenarthra ----
+Dasypus_novemcinctus
+Choloepus_hoffmanni
+
+---- Other mammals ----
+Monodelphis_domestica
+Ornithorhynchus_anatinus
+Macropus_eugenii
+
+---- Birds & Reptiles ----
+Anolis_carolinensis
+Gallus_gallus
+Taeniopygia_guttata
+
+---- Amphibians ----
+Xenopus_tropicalis
+
+---- Fish ----
+Takifugu_rubripes
+Oryzias_latipes
+Gasterosteus_aculeatus
+Tetraodon_nigroviridis
+Danio_rerio
+
+---- Other chordates ----
+Ciona_intestinalis
+Ciona_savignyi
+
+---- Other eukaryotes ----
 Aedes_aegypti
 Anopheles_gambiae
 Apis_mellifera
-Bos_taurus
 Caenorhabditis_elegans
-Canis_familiaris
-Ciona_intestinalis
-Ciona_savignyi
-Danio_rerio
-Dasypus_novemcinctus
 Drosophila_melanogaster
-Echinops_telfairi
-Gallus_gallus
-Gasterosteus_aculeatus
-Loxodonta_africana
-Macaca_mulatta
-Monodelphis_domestica
-Oryctolagus_cuniculus
-Oryzias_latipes
-Pan_troglodytes
-Rattus_norvegicus
+Aspergillus_nidulans
 Saccharomyces_cerevisiae
-Takifugu_rubripes
-Tetraodon_nigroviridis
-Xenopus_tropicalis");
+Schizosaccharomyces_pombe");
 
 my @ensembl_types = split("\n",
 "genomic
@@ -974,6 +1029,13 @@ my (
 	$info_pixmap, $error_pixmap,
 );
 load_icon_data();
+
+
+# Setup UserAgent
+my $ua = LWP::UserAgent->new();
+# timeout - default value of 180 seconds is too long
+$ua->timeout(60);
+$ua->agent('User-Agent: Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3');
 
 
 		#-----------------#
@@ -4709,8 +4771,9 @@ sub fetch_ensembl {
 	# ... and as of 06/2006, Ensembl is back to "searchview"!  Worse, textview works (thereby removing
 	# my supposedly failsafe error message) but returns no matches.  Sheesh ...
 	# $_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
-	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Summary?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
-	# print "$_\n\n";
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
+	#print "http://www.ensembl.org/$ensembl_organism/Search/Details?species=$ensembl_organism;idx=Gene;q=$ensembl_gene\n";
+	#print "$_\n\n";
 		
 	s/<\/*span.*?>//g; # rip out highlight spans
 	s/<\/*font.*?>//g; # rip out font spans
@@ -4891,10 +4954,10 @@ sub convert_ensembl {
 	# Thanks to Karl Kashofer for the following fix ...
 	# for genomic retrieval we need to append "genomic=unmasked"
 	if ($ensembl_type eq 'genomic') {
-		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;genomic=unmasked;_format=Text";
+		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;param=$ensembl_type;genomic=unmasked;_format=Text";
 		return $address;
 	} else {
-		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;_format=Text";
+		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;param=$ensembl_type;_format=Text";
 		return $address;
 	};
 }
@@ -4910,11 +4973,7 @@ sub http_get {
 	# I'd love to fork this and stop the GUI blocking here - but I cannot find
 	# an effective way to do this ... :(
 	my ($address, $method) = @_;
-	# print "$address\n";
-	my $ua = LWP::UserAgent->new();
-	
-	# timeout - default value of 180 seconds is too long
-	$ua->timeout(60);
+	#print "address:$address\n";
 	
 	# proxy server
 	if ($use_proxy) {
@@ -4923,7 +4982,7 @@ sub http_get {
 		my $proxy = $2;
 		$ua->proxy('http', "http://$proxy:$http_port");
 	} else {
-		# still allow env_proxy override
+		# still allow env_proxy
 		$ua->env_proxy();
 	}
 	
@@ -4939,8 +4998,7 @@ sub http_get {
 	}
 	
 	$top->update;
-	my $http = $response->content;
-	# print "http:$http\n";
+	my $http = $response->content;	
 	
 	return $http;
 }
@@ -5299,7 +5357,7 @@ sub info {
 	
 	my $text = <<EOT;
 PerlPrimer v$version
-Copyright © 2003-2008 Owen Marshall\n
+Copyright © 2003-2009 Owen Marshall\n
 EOT
 	my $text2 = <<EOT;
 An application to design primers for PCR, Bisulphite PCR, Real-time PCR and Sequencing.

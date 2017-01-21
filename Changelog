@@ -1,3 +1,7 @@
+9/10/09  (PerlPrimer-1.1.18)
+- Fixed Ensembl compatibility
+- Added many more Ensembl genomes to the dropdown list
+
 24/3/09  (PerlPrimer-1.1.17)
 - Fixed Ensembl retrieval of genomic sequences (thanks to Karl Kashofer for this fix!)
 
