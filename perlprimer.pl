@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.16pre1 (20 Nov 2008)
+# version 1.1.17 (24 Mar 2009)
 # Copyright © 2003-2008, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.16";
+	$version = "1.1.17";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -39,7 +39,7 @@ BEGIN {
 PerlPrimer v$version
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-Copyright © 2003-2008 Owen Marshall\n
+Copyright © 2003-2009 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
@@ -4883,10 +4883,20 @@ sub convert_ensembl {
 	# argument to http address converter
 	my ($ensembl_organism,$transcript,$ensembl_type,$export_type) = @_;
 	$export_type||='Transcript';
+	
 	# my $address = "http://www.ensembl.org/$ensembl_organism/exportview?seq_region_name=&type1=transcript&anchor1=$transcript&type2=bp&anchor2=&downstream=&upstream=&format=fasta&action=export&_format=Text&options=$ensembl_type&output=txt";
-	my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;_format=Text";
-	# print "Address is\n$address\n\n";
-	return $address;
+	# my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;_format=Text";
+	# return $address;
+	
+	# Thanks to Karl Kashofer for the following fix ...
+	# for genomic retrieval we need to append "genomic=unmasked"
+	if ($ensembl_type eq 'genomic') {
+		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;genomic=unmasked;_format=Text";
+		return $address;
+	} else {
+		my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;_format=Text";
+		return $address;
+	};
 }
 
 
