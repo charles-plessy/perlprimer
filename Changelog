@@ -1,3 +1,9 @@
+13/07/04:	(PerlPrimer-1.1.4a)
+		BUGFIX: "Open Sequence" buttons did not work correctly when opening sequences in FASTA format (or genomic DNA sequence for QPCR tab)
+		BUGFIX: Bisulphite PCR tab did not display primer information in the status bar when dimer dG == 0
+		BUGFIX: Finding sequencing primers without a dG cutoff did not calculate dG for primers
+		Minor GUI changes for Win32 to work with ActivePerl v5.8.4 (some cosmetic Perl/Tk changes)
+
 21/06/04:	(PerlPrimer-1.1.4)
 		View spidey output command now runs spidey directly
 		Win32::FileOp code disabled - causes redraw problems with Perl/Tk

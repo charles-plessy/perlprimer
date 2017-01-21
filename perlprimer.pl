@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.4 (21/6/2004)
+# version 1.1.4a (13/7/2004)
 # Copyright © 2003-2004, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,9 +29,9 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.4";
+	$version = "1.1.4a";
 	($commandline) = @ARGV;
-	# $win_exe = 1;
+	$win_exe = 0;
 	
 	if ($commandline && $commandline =~ /^-[\w-]+/) {
 		print <<EOT;
@@ -689,7 +689,7 @@ unless ($^O =~ /mswin/i) {
 	$text_font_face = "Courier";
 	$text_font_size = 8;
 	$menu_relief = 'flat';
-	$button_pady = -2;
+	$button_pady = 1;
 	$button_pack_padx = 2;
 	$button_pack_pady = 2;
 	$frame_pady = 2;
@@ -1094,7 +1094,7 @@ my %balloonmsg = (
 	'gc_clamp_seq', "Require primers to have a 3' GC clamp\n(two of the last three bases G or C)",
 	'exclude_pd_seq', "Do not consider primers which can form dimers\nwith a stability greater than this value",
 	'spdmin', "Do not consider primers which can form dimers\nwith a stability greater than this value",
-	'seq_button', "Find primer pairs\n(at least one primer must span an intron-exon boundary)",
+	'seq_button', "Find primer pairs",
 	'seq_cancel', "Cancel the current task",
 	'seq_view', "Copy the selected primer pairs to the clipboard\n(format is tab-delimited text)",
 	
@@ -1863,7 +1863,7 @@ sub read_sock {
 		return;
 	} else {
 		# Open the socket data as a FASTA file
-		pp_file_open("[data from external application]", @lines);
+		pp_file_open("[data from external application]", '', @lines);
 		my ($sub) = get_variables(qw(primer_sub));
 		&$sub() if $ipc_autofind;
 	}
@@ -2749,10 +2749,12 @@ sub calc_seq_primers {
 			}
 		}		
 		
+		# calculate primer-dimers
+		my $pd = primer_dimer($seq,$seq);
+		
 		# exclude all primer-dimers if asked ...
-		my $pd;
 		if ($exclude_pd_seq == 1) {
-             		next if ($pd = primer_dimer($seq,$seq)) < -$seq_pd_min;
+             		next if $pd < -$seq_pd_min;
 		}
 					
 		$tm_f = sprintf("%.2f", $tm_f);
@@ -4387,6 +4389,7 @@ sub get_primers_cloning {
 #----------#
 
 sub new_file {
+	my ($widget_ref) = @_;
 	my $page = which_nb_page();
 	if ($page eq "primer") {
 		dialogue("You can't open a new file from the primer information page - please switch to the relevant project page first");
@@ -4394,11 +4397,17 @@ sub new_file {
 	}
 
 	my ($seq_ref, $hlist) = get_variables(qw(seq hlist));
-	my $seq = $$seq_ref->search(-regexp => "[a|g|t|c|A|T|G|C]", "0.1");
+	$seq_ref = $widget_ref if ref($widget_ref);
+	
+	$_ = $$seq_ref->get(0.1,"end");
+	my ($seq_check) = /atcg/i;
+	
+	# print "seq was $_\n\n\$seq was $seq\n";
+	# my $seq = $$seq_ref->search(-regexp => "[a|g|t|c|A|T|G|C]", "0.1");
 	
 	# If there's a sequence present, prompt to make sure the user wants to
 	# lose all changes ...
-	if (defined($seq) && $file_data_overwrite) {
+	if (defined($seq_check) && $file_data_overwrite) {
 		my $answer = dialogue("Save before closing?", 'Yes', 'No', 'Cancel');
 		if ($answer =~ /cancel/i) {
 			$cancel = 1;
@@ -4409,8 +4418,9 @@ sub new_file {
 	}
 	
 	if ($page eq "qpcr") {
-		# only for qpcr
+		# only for qpcr - quick and dodgy fix
 		$prf{qdna_seq}->delete(0.1,"end");
+		$prf{qmrna_seq}->delete(0.1,"end");
 	}
 	
 	# Clear variables
@@ -4715,6 +4725,8 @@ sub fetch_ensembl {
 		return;
 	}
 	
+	new_file();
+	
 	if ($page eq 'qpcr') {
 		# retrieve both gene and transcript sequences - retrieval type is ignored
 		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=genomic&out=text&btnsubmit=Export&embl_format=embl");
@@ -4736,6 +4748,11 @@ sub fetch_ensembl {
 		$$seq_ref->insert(0.1,$_);
 	}
 	
+	# # truncate name of gene
+	# (my $name_trunc = $name) =~ s/\(.*\)//g;
+	# $name_trunc =~ s/\s+/_/g;
+	# $name_trunc =~ s/_+$//g;
+
 	# update title
 	my $file_name = "$ensembl_gene"."_($ensembl_organism)";
 	$top->configure(-title=>"PerlPrimer v$version - $file_name");
@@ -4838,17 +4855,17 @@ sub header_create {
 
 
 sub browse_bisulphite {
-	my $seq = get_seq();
+	# my $seq = get_seq();
 	# Believe it or not, when a primer-pair is double-clicked to send the user
 	# to the hlist-command sub, the browse-command sub is still executed! In
 	# our case, that's pretty bad since we're now requesting a sequence on a
 	# page that doesn't have one.  So there's a failsafe here:
-	return if $seq eq "1";
+	# return if $seq eq "1";
 
-	my $hlist_sel = $_[0];
+	my ($hlist_sel) = @_;
 	
 	# This routine colours original C residues red and original CpG C's blue
-	if ($primer_pairs_bs_s[$hlist_sel][10]) {
+	# if ($primer_pairs_bs_s[$hlist_sel][10]) {
 		# brute force!!		
 		my $f_original = $primer_pairs_bs_s[$hlist_sel][11];
 		my $f_converted = $primer_pairs_bs_s[$hlist_sel][0];
@@ -4885,7 +4902,7 @@ sub browse_bisulphite {
 		$status_bar->see('end');
 
 		browse_primer($hlist_sel);
-	}
+	# }
 }
 
 
@@ -6607,7 +6624,7 @@ sub pp_file_open {
 	# support for another varible simple entails a single line in either the
 	# %variables or %arrays hashes - everything else is automatic ... )
 	
-	my ($file, @file_data) = @_;
+	my ($file, $widget_ref, @file_data) = @_;
 	$file ||= $top->getOpenFile(-filetypes=>$file_types);
 	return unless defined($file);
 		
@@ -6626,7 +6643,7 @@ sub pp_file_open {
 	# clear previous selections:
 	# new_file();
 	
-	my ($nb_page, $name) = open_file_type($file, @file_data);
+	my ($nb_page, $name) = open_file_type($file, $widget_ref, @file_data);
 	unless ($nb_page) {
 		$cancel = 0;
 		return;
@@ -6652,8 +6669,7 @@ sub pp_file_open {
 }
 
 sub open_file_type {
-	my $file = shift;
-	my @file_data = @_;
+	my ($file, $widget_ref, @file_data) = @_;
 	my ($page, $name);
 	foreach (@file_data) {
 		# This loop is in case the first line is blank.
@@ -6664,13 +6680,13 @@ sub open_file_type {
 			return ($page, $name) = open_ppr($file, @file_data);
 		} elsif (/^\>.+/) {
 			# file appears to be FASTA format
-			return ($page, $name) = open_fasta($file, @file_data);
-		} elsif (/[efijlopqz\d]+/i) {
-			# file is unknown format
-			dialogue("File does not appear to be a PerlPrimer file or in FASTA format.\nIf you are trying to open a DNA sequence file, please use the open icon next to the sequence entry field");
-			last;
+			return ($page, $name) = open_fasta($file, $widget_ref, @file_data);
+		# } elsif (/[efijlopqz\d]+/i) {
+			# # file is unknown format
+			# dialogue("File does not appear to be a PerlPrimer file or in FASTA format.\nIf you are trying to open a DNA sequence file, please use the open icon next to the sequence entry field");
+			# last;
 		} else {
-			return ($page, $name) = open_fasta($file, @file_data);
+			return ($page, $name) = open_fasta($file, $widget_ref, @file_data);
 		}
 	}
 }
@@ -6777,8 +6793,7 @@ sub open_ppr {
 }
 
 sub open_fasta {
-	my $file = shift;
-	my @file_data = @_;
+	my ($file, $widget_ref, @file_data) = @_;
 	my ($flag, $dna, $name, $range_5a, $range_5b, $range_3a, $range_3b, $page);
 	my $nb_page = which_nb_page();
 	my ($key, $value, $lines, $open_percent);
@@ -6799,10 +6814,12 @@ sub open_fasta {
 			# process name (remove whitespace, other illegal filename chars)
 			$name =~ s/\s+/_/g; # whitespace
 			$name =~ s/[,]//g; # other characters - in progress
-			
-			$page = 1 unless ($page && $nb_page_ref{$page});
-			$nb_page = $nb_page_ref{$page};
+
+			# page defaults to 1 if there's other info that suggests this is a socket file
+			$page ||= 1 if ($range_5a || $range_5b || $range_3a || $range_3b);
+			$nb_page = $nb_page_ref{$page} if $page;
 			$nb->raise($nb_page);
+
 			$top->update;
 			if ($cancel) {
 				sbarprint("\nFile open cancelled");
@@ -6816,10 +6833,15 @@ sub open_fasta {
 	
 	# insert dna sequence if present
 	if ($dna && $dna =~ /[agct]/i) {
-		new_file();
-		my ($seq_ref) = get_variables(qw(seq));
-		$$seq_ref->delete(0.1,"end");
-		$$seq_ref->insert(0.1,$dna);
+		($widget_ref) = get_variables(qw(seq)) unless ref($widget_ref);
+		$_ = $$widget_ref->get(0.1,"end");
+		
+		# New file if we're overwriting a previous sequence
+		my ($seq_check) = /atcg/i;
+		new_file($widget_ref) if $seq_check;
+				
+		$$widget_ref->delete(0.1,"end");
+		$$widget_ref->insert(0.1,$dna);
 	}
 	
 	# set ranges if specified
@@ -6957,17 +6979,18 @@ sub recently_used_files {
 
 sub open_seq {
 	# opens file and writes contents to text widget
+	my ($widget_ref) = @_;
 	my $file = $top->getOpenFile(-filetypes=>$file_types_dna);
 	if (defined($file)) {
-		pp_file_open($file);
+		pp_file_open($file, $widget_ref);
 	}
 }
 
 sub save_seq {
 	# saves sequence in text widget to file
-	my $ref = shift;
+	my ($widget_ref) = @_;
 	my $file = $top->getSaveFile(-filetypes=>$file_types_dna, -defaultextension=>'.fasta');
-	my $seq = $$ref->get(0.1, 'end');
+	my $seq = $$widget_ref->get(0.1, 'end');
 	my $nb_page = which_nb_page();
 	if (defined($file)) {
 		my $out;
