@@ -1,3 +1,20 @@
+21/12/04:	(PerlPrimer-1.1.5)
+			Old preferences are automatically copied to the new home directory location when upgrading
+			Win32 executable built with ActivePerl 5.8.6 and PAR 0.86
+
+20/12/04:	PerlPrimer now translates in frame from the forward primer if this starts upstream of the ORF (allows easy identification of stop codons when designing cloning primers)
+			Better handling of information from FASTA files - FASTA header now automatically becomes the file name
+			Several minor bug fixes and code-tidying
+
+03/11/04:	Home and temporary directory fixes - directories are now set from Perl environmental variables if possible; tmp directory set to home if user does not have correct read/write permissions or if directory does not exist
+		Full primer-dimer values are calculated as well as extensible primer-dimers, and results are sorted based on both values
+
+01/09/04:	BLAST search can now use a local blast database and server
+		"View intron/exon structure" button in QPCR tab graphically draws the exon/intron structure of the genomic DNA (thus showing the size of the introns)
+		New browse directory code (requires a recent version of Perl/Tk to run correctly)
+		BUGFIX: Saving .ppr files did not work correctly under some Perl distributions
+		Complete re-write of the internal GUI code (now made more extensible and more comprehensible)
+
 13/07/04:	(PerlPrimer-1.1.4a)
 		BUGFIX: "Open Sequence" buttons did not work correctly when opening sequences in FASTA format (or genomic DNA sequence for QPCR tab)
 		BUGFIX: Bisulphite PCR tab did not display primer information in the status bar when dimer dG == 0

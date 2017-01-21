@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.4a (13/7/2004)
+# version 1.1.5 (21/12/2004)
 # Copyright © 2003-2004, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.4a";
+	$version = "1.1.5";
 	($commandline) = @ARGV;
 	$win_exe = 0;
 	
@@ -74,10 +74,6 @@ BEGIN {
 	my $eval_sub = sub {
 		eval $_;
 		if ($@) {
-			unless ($warning) {
-				print "PerlPrimer v$version\nCopyright © 2003-2004 Owen Marshall\n\n";
-				$warning = 1;
-			}
 			/(use|require)\s*([\w:-]+)\;/;
 			my $package = $2;
 			
@@ -85,7 +81,16 @@ BEGIN {
 			
 			# Special circumstances!
 			return if $package eq "Benchmark";
-			return if $package eq "Win32::FileOp";
+			return if $package eq "File::Copy";
+			return if $package eq "Win32::GUI";
+			
+			# Print warning header if not already printed
+			unless ($warning) {
+				print "PerlPrimer v$version\nCopyright © 2003-2004 Owen Marshall\n\n";
+				$warning = 1;
+			}
+			
+			# Print specific warning messages to alert the user that modules are missing
 			if ($package eq "Tk") {
 				print "Error: Perl/Tk not found!\nPerlPrimer requires Perl/Tk to run - please download from CPAN (http://cpan.org) and install before running.\n\n";
 				exit 0;
@@ -104,6 +109,9 @@ use Benchmark;
 use HTTP::Request;
 use LWP::UserAgent;
 use IO::Socket;
+use Win32::GUI;
+use File::Copy;
+use File::Glob ':glob';
 require Tk::NoteBook;
 require Tk::HList;
 require Tk::ItemStyle;
@@ -138,261 +146,12 @@ require Tk::DirTree;
 # 10. deltaG of most stable extensible primer-dimer
 # 11. [primer_f sequence pre-conversion for Bisulphite PCR]
 # 12. [primer_r sequence pre-conversion for Bisulphite PCR]
+# 13. deltaG of most stable non-extensible primer-dimer
 
 
-#-----
-#
-# NN thermodynamics hashes (AA = 5' AA 3'/3' TT 5') derived from ...
-# 
-# Allawi HT, SantaLucia J Jr.  Thermodynamics and NMR of internal G.T mismatches in DNA.
-# 	Biochemistry. 1997 Aug 26;36(34):10581-94
-#
-# SantaLucia J Jr.  A unified view of polymer, dumbbell, and oligonucleotide DNA nearest-neighbor thermodynamics.
-# 	Proc Natl Acad Sci U S A. 1998 Feb 17;95(4):1460-5. 
-# 
-# ... with mismatch dG data (AGTG = 5' AG 3'/3' TG 5') derived from ...
-# 
-# Peyret N, Seneviratne PA, Allawi HT, SantaLucia J Jr.  Nearest-neighbor thermodynamics and NMR of DNA sequences with internal A.A, C.C, G.G, and T.T mismatches.
-# 	Biochemistry. 1999 Mar 23;38(12):3468-77. 
-# 
-# Allawi HT, SantaLucia J Jr.  Nearest-neighbor thermodynamics of internal A.C mismatches in DNA: sequence dependence and pH effects.
-# 	Biochemistry. 1998 Jun 30;37(26):9435-44.
-# 
-# Allawi HT, SantaLucia J Jr.  Thermodynamics of internal C.T mismatches in DNA.
-# 	Nucleic Acids Res. 1998 Jun 1;26(11):2694-701. 
-# 
-# Allawi HT, SantaLucia J Jr.  Nearest neighbor thermodynamic parameters for internal G.A mismatches in DNA.
-# 	Biochemistry. 1998 Feb 24;37(8):2170-9.
-# 
-# Allawi HT, SantaLucia J Jr.  Thermodynamics and NMR of internal G.T mismatches in DNA.
-# 	Biochemistry. 1997 Aug 26;36(34):10581-94
-# 
-#-----
-
-#-------------------#
-# deltaH (kcal/mol) #
-#-------------------#
-
-my %oligo_dH=qw(
-	AA -7.9 TT -7.9 
-	AT -7.2 TA -7.2 
-	CA -8.5 TG -8.5 
-	GT -8.4 AC -8.4 
-	CT -7.8 AG -7.8 
-	GA -8.2 TC -8.2 
-	CG -10.6 GC -9.8 
-	GG -8.0 CC -8.0 
-	initC 0.1 initG 0.1 
-	initA 2.3 initT 2.3
-);
-
-my %oligo_dH_full=(
-	qw(AATT -7.9 	TTAA -7.9 
-	ATTA -7.2 	TAAT -7.2 
-	CAGT -8.5 	TGAC -8.5 
-	GTCA -8.4 	ACTG -8.4 
-	CTGA -7.8 	AGTC -7.8 
-	GACT -8.2 	TCAG -8.2 
-	CGGC -10.6 	GCCG -9.8 
-	GGCC -8.0 	CCGG -8.0
-		
-	initC 0.1 	initG 0.1 
-	initA 2.3 	initT 2.3),
-	
-	# Like pair mismatches 
-		
-	qw(AATA 1.2 	ATAA 1.2
-	CAGA -0.9 	AGAC -0.9
-	GACA -2.9 	ACAG -2.9
-	TAAA 4.7 	AAAT 4.7 
-	
-	ACTC 0.0 	CTCA 0.0 
-	CCGC -1.5 	CGCC -1.5
-	GCCC 3.6 	CCCG 3.6 
-	TCAC 6.1 	CACT 6.1 
-	
-	AGTG -3.1 	GTGA -3.1
-	CGGG -4.9 	GGGC -4.9
-	GGCG -6.0 	GCGG -6.0
-	TGAG 1.6 	GAGT 1.6 
-	
-	ATTT -2.7 	TTTA -2.7
-	CTGT -5.0 	TGTC -5.0
-	GTCT -2.2 	TCTG -2.2
-	TTAT 0.2 	TATT 0.2  ),
-	
-	# G.T mismatches 
-	
-	qw(AGTT 1.0  	TTGA 1.0
-	ATTG  -2.5 	GTTA  -2.5
-	CGGT  -4.1 	TGGC  -4.1
-	CTGG  -2.8 	GGTC  -2.8
-	GGCT  3.3 	TCGG  3.3
-	GGTT  5.8 	TTGG  5.8
-	GTCG  -4.4 	GCTG  -4.4
-	GTTG  4.1 	GTTG  4.1
-	TGAT  -0.1 	TAGT  -0.1
-	TGGT  -1.4 	TGGT  -1.4
-	TTAG  -1.3 	GATT  -1.3), 
-	
-	# G.A mismatches 
-	
-	qw(AATG  -0.6 	GTAA  -0.6
-	AGTA  -0.7 	ATGA  -0.7
-	CAGG  -0.7 	GGAC  -0.7
-	CGGA  -4.0 	AGGC  -4.0
-	GACG  -0.6 	GCAG  -0.6
-	GGCA  0.5 	ACGG  0.5
-	TAAG  0.7 	GAAT  0.7
-	TGAA  3.0 	AAGT  3.0), 
-	
-	# C.T mismatches 
-	
-	qw(ACTT  0.7 	TTCA  0.7
-	ATTC  -1.2 	CTTA  -1.2
-	CCGT  -0.8 	TGCC  -0.8
-	CTGC  -1.5 	CGTC  -1.5
-	GCCT  2.3 	TCCG  2.3 
-	GTCC  5.2 	CCTG  5.2 
-	TCAT  1.2 	TACT  1.2 
-	TTAC  1.0 	CATT  1.0), 
-	
-	# A.C mismatches 
-	
-	qw(AATC  2.3	CTAA  2.3
-	ACTA  5.3 	ATCA  5.3 
-	CAGC  1.9 	CGAC  1.9 
-	CCGA  0.6 	AGCC  0.6 
-	GACC  5.2 	CCAG  5.2 
-	GCCA  -0.7 	ACCG  -0.7
-	TAAC  3.4  	CAAT  3.4 
-	TCAA  7.6 	AACT  7.6),
-
-);
-
-#--------------------#
-# deltaS (cal/K.mol) #
-#--------------------#
-
-my %oligo_dS=qw(
-	AA -22.2 TT -22.2 
-	AT -20.4 TA -21.3 
-	CA -22.7 TG -22.7 
-	GT -22.4 AC -22.4 
-	CT -21.0 AG -21.0 
-	GA -22.2 TC -22.2 
-	CG -27.2 GC -24.4 
-	GG -19.9 CC -19.9 
-	initC -2.8 initG -2.8 
-	initA 4.1 initT 4.1 
-	sym -1.4
-);
-
-my %oligo_dS_full=(
-	qw(AATT -22.2 	TTAA -22.2 
-	ATTA -20.4 	TAAT -21.3 
-	CAGT -22.7 	TGAC -22.7 
-	GTCA -22.4 	ACTG -22.4 
-	CTGA -21.0 	AGTC -21.0 
-	GACT -22.2 	TCAG -22.2 
-	CGGC -27.2 	GCCG -24.4 
-	GGCC -19.9 	CCGG -19.9
-		
-	initC -2.8 	initG -2.8 
-	initA 4.1 	initT 4.1
-	sym -1.4),
-	
-	# Like pair mismatches
-		
-	qw(AATA 1.7 	ATAA 1.7
-	CAGA -4.2 	AGAC -4.2 
-	GACA -9.8 	ACAG -9.8 
-	TAAA 12.9 	AAAT 12.9 
-	
-	ACTC -4.4 	CTCA -4.4 
-	CCGC -7.2 	CGCC -7.2 
-	GCCC 8.9 	CCCG 8.9 
-	TCAC 16.4 	CACT 16.4 
-	
-	AGTG -9.5 	GTGA -9.5 
-	CGGG -15.3 	GGGC -15.3
-	GGCG -15.8 	GCGG -15.8
-	TGAG 3.6 	GAGT 3.6 
-	
-	ATTT -10.8 	TTTA -10.8
-	CTGT -15.8 	TGTC -15.8
-	GTCT -8.4 	TCTG -8.4 
-	TTAT -1.5 	TATT -1.5),
-	
-	# G.T mismatches
-	
-	qw(AGTT 0.9 	TTGA 0.9
-	ATTG  -8.3 	GTTA  -8.3
-	CGGT  -11.7 	TGGC  -11.7
-	CTGG  -8.0 	GGTC  -8.0
-	GGCT  10.4 	TCGG  10.4
-	GGTT  16.3 	TTGG  16.3
-	GTCG  -12.3 	GCTG  -12.3
-	GTTG  9.5 	GTTG  9.5
-	TGAT  -1.7 	TAGT  -1.7
-	TGGT  -6.2 	TGGT  -6.2
-	TTAG  -5.3 	GATT  -5.3), 
-	
-	# G.A mismatches
-	
-	qw(AATG  -2.3 	GTAA  -2.3
-	AGTA  -2.3 	ATGA  -2.3
-	CAGG  -2.3 	GGAC  -2.3
-	CGGA  -13.2 	AGGC  -13.2
-	GACG  -1.0 	GCAG  -1.0
-	GGCA  3.2 	ACGG  3.2
-	TAAG  0.7 	GAAT  0.7
-	TGAA  7.4 	AAGT  7.4), 
-	
-	# C.T mismatches
-	
-	qw(ACTT  0.2 	TTCA  0.2
-	ATTC  -6.2 	CTTA  -6.2
-	CCGT  -4.5 	TGCC  -4.5
-	CTGC  -6.1 	CGTC  -6.1
-	GCCT  5.4 	TCCG  5.4 
-	GTCC  13.5 	CCTG  13.5
-	TCAT  0.7 	TACT  0.7 
-	TTAC  0.7 	CATT  0.7), 
-	
-	# A.C mismatches
-	
-	qw(AATC  4.6 	CTAA  4.6
-	ACTA  14.6 	ATCA  14.6
-	CAGC  3.7 	CGAC  3.7 
-	CCGA  -0.6 	AGCC  -0.6
-	GACC  14.2 	CCAG  14.2
-	GCCA  -3.8 	ACCG  -3.8
-	TAAC  8.0  	CAAT  8.0 
-	TCAA  20.2 	AACT  20.2),
-
-);
-
-
-# Genetic code hash
-my %genetic_code=qw(
-		TTT F TTC F TTA L TTG L
-		CTT L CTC L CTA L CTG L
-		ATT I ATC I ATA I ATG M
-		GTT V GTC V GTA V GTG V
-		TCT S TCC S TCA S TCG S
-		CCT P CCC P CCA P CCG P
-		ACT T ACC T ACA T ACG T
-		GCT A GCC A GCA A GCG A
-		TAT Y TAC Y TAA * TAG *
-		CAT H CAC H CAA Q CAG Q
-		AAT N AAC N AAA K AAG K
-		GAT D GAC D GAA E GAG E
-		TGT C TGC C TGA * TGG W
-		CGT R CGC R CGA R CGG R
-		AGT S AGC S AGA R AGG R
-		GGT G GGC G GGA G GGG G
-);
+# Load thermodynamic data and genetic code...
+my (%oligo_dH, %oligo_dH_full, %oligo_dS, %oligo_dS_full, %genetic_code);
+load_data();
 
 		
 # Starting ionic concentration variables
@@ -441,6 +200,7 @@ my $exclude_gc_seq = 1;
 my $exclude_clamp_seq = 1;
 my $exclude_pd_seq = 1;
 my $seq_pd_min = 5;
+
 
 # Establish default varibles for opening a new file - perhaps a bit verbose
 # but it is rather neat ...
@@ -491,6 +251,65 @@ my %default_variables = (
 		\$exclude_ie => $exclude_ie,
 	},
 );
+
+# Home environment variables and OS-specific tweaking:
+
+# These variables are the total changes required for nice cross-platform compatibility 
+# (and most of these are cosmetic - strange that the Tk look&feel is not consistent with
+# things such as widget spacing, most notably the checkbuttons)
+my $HOME = $ENV{HOME} || $ENV{HOMEPATH}; # HOMEPATH may not work correctly on Win32 ...
+my $tmp = $ENV{TEMP} || $ENV{TMP};
+my ($dir_sep, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
+
+if ($^O =~ /mswin/i) {
+	# MS Windows OS
+	$os = 'win';
+	$HOME ||= 'c:\\'; # only if not set by $ENV above
+	$tmp ||= 'c:\temp\\'; # only if not set by $ENV above
+	$dir_sep = '\\';
+	$gui_font_face = "MS Sans Serif";
+	$gui_font_size = 8;
+	$list_font_face = "Verdana";
+	$list_font_size = 7;
+	$text_font_face = "Courier";
+	$text_font_size = 8;
+	$menu_relief = 'flat';
+	$button_pady = 1;
+	$button_pack_padx = 2;
+	$button_pack_pady = 2;
+	$frame_pady = 2;
+	$check_pady = 0;
+} else {
+	# *nix OS
+	$os = 'nix';
+	$HOME ||= (getpwuid($<))[7].'/'; # only if not set above
+	$tmp = '/tmp/'; # only if not set above
+	$dir_sep = '/';
+	$gui_font_face = "Helvetica";
+	$gui_font_size = 10;
+	$list_font_face = "Helvetica";
+	$list_font_size = 10;
+	$text_font_face = "Courier";
+	$text_font_size = 10;
+	$menu_relief = 'raised';
+	$button_pady = 2;
+	$button_pack_padx = 0;
+	$button_pack_pady = 0;
+	$frame_pady = 1;
+	$check_pady = 3;
+}
+
+# check tmp directory exists, is user readable and writable,
+# else use the home directory
+$tmp = $HOME unless (-e $tmp && -r $tmp && -w $tmp);
+
+# check directories have trailing slash ...
+$tmp = check_path($tmp);
+$HOME = check_path($HOME);
+
+# directory the program has been run in (for RE enzyme database)
+my $program_directory = $0;
+$program_directory =~ s/([^\\\/]*$)//;
 
 # flags
 my $bs=0;
@@ -630,11 +449,15 @@ Takifugu rubripes [ORGN]
 Xenopus laevis [ORGN]
 Zea mays [ORGN]");
 
+my $local_blast = 0;
+my $local_blast_directory = $HOME;
+my $local_blast_database;
+
 my $blast_count;
 my $http_abort;
 
 # Primer-dimer parameters
-my $pd_full=0;
+# my $pd_full=0;
 my $pd_extensible=1;
 my $pd_temperature=37;
 
@@ -649,56 +472,22 @@ my $ipc_autofind = 0;
 my $tcp_port = 2500;
 my $socket_polling_interval = 1000; # msec
 
+# Header columns
+my @header_list_primers = split("\n",
+"Forward Primer
+Pos
+Len
+Tm
+Reverse Primer
+Pos
+Len
+Tm
+Amp
+Ext. dimer dG
+Full dimer dG");
+
 # Mouse wheel
 my $scroll_factor = 2;
-
-# Home environment variables and OS-specific tweaking:
-# (HOME defaults to home folder on *nix and C drive on Win32)
-### Need a tmp folder search here for spidey files to be placed into!!
-
-# These variables are the total changes required for nice cross-platform compatibility 
-# (and most of these are cosmetic - strange that the Tk look&feel is not consistent with
-# things such as widget spacing, most notably the checkbuttons)
-my ($HOME, $dir_sep, $tmp, $os, $gui_font_face, $gui_font_size, $text_font_face, $text_font_size, $list_font_face, $list_font_size, $font_override, $menu_relief, $frame_pady, $check_pady, $button_pady, $button_pack_padx, $button_pack_pady);
-unless ($^O =~ /mswin/i) {
-	$HOME = (getpwuid($<))[7].'/';
-	$dir_sep = '/';
-	$tmp = '/tmp/';
-	$os = 'nix';
-	$gui_font_face = "Helvetica";
-	$gui_font_size = 10;
-	$list_font_face = "Helvetica";
-	$list_font_size = 10;
-	$text_font_face = "Courier";
-	$text_font_size = 10;
-	$menu_relief = 'raised';
-	$button_pady = 2;
-	$button_pack_padx = 0;
-	$button_pack_pady = 0;
-	$frame_pady = 1;
-	$check_pady = 3;
-} else {
-	$HOME = 'c:\\';
-	$dir_sep = '\\';
-	$tmp = 'c:\temp\\';
-	$os = 'win';
-	$gui_font_face = "MS Sans Serif";
-	$gui_font_size = 8;
-	$list_font_face = "Verdana";
-	$list_font_size = 7;
-	$text_font_face = "Courier";
-	$text_font_size = 8;
-	$menu_relief = 'flat';
-	$button_pady = 1;
-	$button_pack_padx = 2;
-	$button_pack_pady = 2;
-	$frame_pady = 2;
-	$check_pady = 0;
-}
-
-# directory the program has been run in (for RE enzyme database)
-my $program_directory = $0;
-$program_directory =~ s/([^\\\/]*$)//;
 
 # Win32 only - for button pre-lights
 my $activebackground_color="#ececec";
@@ -724,6 +513,7 @@ my (
 	$pfkeys, $pkeys, @PF, @PR, %primer_hash,
 	$gc_exclude, $gc_percent_ex, @primer_pairs,
 	$prl, $pfl, $pl, @bind_string, %rating_hash, @score,
+	%packed_widgets,
 	
 	$save_seq, $save_seq2,
 	@primer_pairs_pr_s, @primer_pairs_seq_s, @primer_pairs_bs_s, @primer_pairs_q_s, @save_selection,
@@ -757,7 +547,7 @@ my (
 # GUI dialogues
 my (
 	$blast_d, $view_base, $prefs, $ack_d, $canvas_info_d, $info_d,
-	$cloning_d,
+	$cloning_d, $view_ie,
 );
 
 my $balloon_help = 1;		
@@ -890,7 +680,7 @@ my %arrays = (
 		
 # Hash for opening/saving prefs
 my %pref_variables = (
-	home => \$HOME,
+	# home => \$HOME,
 	tmp => \$tmp,
 	spidey_path => \$spidey_path,
 	repeats => \$repeat,
@@ -913,6 +703,9 @@ my %pref_variables = (
 	blast_database => \$blast_database,
 	blast_entrez_query => \$blast_entrez_query,
 	blast_expect => \$blast_expect,
+	local_blast => \$local_blast,
+	local_blast_directory => \$local_blast_directory,
+	local_blast_database => \$local_blast_database,
 	gui_font_face => \$gui_font_face,
 	gui_font_size => \$gui_font_size,
 	list_font_face => \$list_font_face,
@@ -958,10 +751,10 @@ my %page_specific_vars = (
 		min_range => \$min_range_pr,
 		max_range => \$max_range_pr,
 		max_range_3p => \$max_range_3p_pr,
-		seq => \$prf{seq},
+		seq => \$packed_widgets{seq},
 		primers => \@primer_pairs_pr_s,
-		hlist => \$prf{res},
-		canvas => \$prf{primer_canvas},
+		hlist => \$packed_widgets{res},
+		canvas => \$packed_widgets{primer_canvas},
 		subroutine => \&get_gene,
 		find_sub => \&find_orf,
 		primer_sub => \&get_primers,
@@ -978,10 +771,10 @@ my %page_specific_vars = (
 		min_range => \$min_range_seq,
 		max_range => \$max_range_seq,
 		max_range_3p => \$null,
-		seq => \$prf{seq_seq},
+		seq => \$packed_widgets{seq_seq},
 		primers => \@primer_pairs_seq_s,
-		hlist => \$prf{seq_res},
-		canvas => \$prf{seq_canvas},
+		hlist => \$packed_widgets{seq_res},
+		canvas => \$packed_widgets{seq_canvas},
 		subroutine => \&get_gene,
 		find_sub => \&find_orf,
 		primer_sub => \&get_seq_primers,
@@ -999,10 +792,10 @@ my %page_specific_vars = (
 		min_range => \$min_range_bs,
 		max_range => \$max_range_bs,
 		max_range_3p => \$max_range_3p_bs,
-		seq => \$prf{bisul_seq},
+		seq => \$packed_widgets{bisul_seq},
 		primers => \@primer_pairs_bs_s,
-		hlist => \$prf{bisul_res},
-		canvas => \$prf{bisul_canvas},
+		hlist => \$packed_widgets{bisul_res},
+		canvas => \$packed_widgets{bisul_canvas},
 		subroutine => \&get_cpg,
 		find_sub => \&find_cpg,
 		primer_sub => \&get_bisulphite,
@@ -1020,10 +813,10 @@ my %page_specific_vars = (
 		min_range => \$null,
 		max_range => \$null,
 		max_range_3p => \$null,
-		seq => \$prf{qmrna_seq},
+		seq => \$packed_widgets{qmrna_seq},
 		primers => \@primer_pairs_q_s,
-		hlist => \$prf{qpcr_res},
-		canvas => \$prf{qprimer_canvas},
+		hlist => \$packed_widgets{qpcr_res},
+		canvas => \$packed_widgets{qprimer_canvas},
 		find_sub => \&find_orf,
 		popup => \$popup_sort,
 	},
@@ -1031,6 +824,13 @@ my %page_specific_vars = (
 
 # prefs_file
 my $pref_file = $HOME.'.perlprimer';
+
+# check for upgrading users under win32 who have a different home environment from c:\
+if ($os eq 'win' && !check_packages('File::Copy') && -e "c:\.perlprimer" && !-e $pref_file) {
+	print "\n\nPlease Note: as of PerlPrimer v1.1.5 the preferences file is now stored in the user's home directory\nCopying old PerlPrimer preferences to $pref_file ...\n";
+	copy("c:\.perlprimer",$pref_file);
+}
+
 read_prefs();
 
 # Balloon help messages
@@ -1174,6 +974,34 @@ unless ($font_override) {
 	$top->optionAdd("*HList.font", $list_font);
 }
 
+# general options
+$top->optionAdd("*Entry.relief", 'groove');
+$top->optionAdd("*Entry.background", '#eeeeee');
+		
+$top->optionAdd("*Text.relief", 'groove');
+$top->optionAdd("*Text.background", '#eeeeee');
+
+$top->optionAdd("*ROText.relief", 'groove');
+$top->optionAdd("*ROText.background", '#eeeeee');
+
+$top->optionAdd("*HList.relief", 'groove');
+$top->optionAdd("*HList.background", '#eeeeee');
+$top->optionAdd("*HList.header", 1);
+$top->optionAdd("*HList.selectmode", 'extended');
+		
+$top->optionAdd("*Label.justify", 'left');
+
+$top->optionAdd("*Button.padY", $button_pady);
+$top->optionAdd("*Button.padX", 5);
+
+$top->optionAdd("*Checkbutton.padY", $check_pady);
+
+$top->optionAdd("*LabFrame.LabelSide", 'acrosstop');
+# $top->optionAdd("*LabFrame.background", '#eeeeee');
+
+# $top->optionAdd("*BrowseEntry.background", '#eeeeee');
+
+
 #--------------#
 # Balloon help #
 #--------------#
@@ -1245,6 +1073,7 @@ my $menu_tools = $menu->cascade(-label => 'Tools', -menuitems => [
 		"-",
 		[command => "Preferences", -command => \&prefs, -accelerator=>'Ctrl-P' ],
 		]);
+		
 my $menu_help = $menu->cascade(-label => "Help", -menuitems => [
 		['Checkbutton' => "Balloon help", -variable => \$balloon_help, -command => \&balloon_toggle],
 		"-",
@@ -1374,22 +1203,9 @@ $status_bar->tagConfigure('blue',
 $status_bar->tagConfigure('grey',
 	-foreground => 'grey20');
 
-	
 tie (*SBAR, 'Tk::Text', $status_bar);
 
-# Packing system:
-# This started off as an extremely simple system and has just kept on growing!
-# It's now pretty robust and provides a good looking layout of widgets, all of
-# which can be nicely arranged within labframes.  Another advantage is providing
-# a consistent look-and-feel.
-
-# NB: This has really become a complicated GUI - and the performance hit when drawing/
-# resizing is quite noticable on old machines.  I'm not too sure of a way around this, 
-# though, without sacrificing good $spidey_execlooks or usability ...
-# (Suggestions welcome!!)
-
-# Format is:  
-# (well, it *was* ... this has changed somewhat now - needs re-documenting!  Sometime ...)
+# Packing system
 #
 # IMPORTANT UPDATE: reliance on grid() has now been greatly reduced (only used for labframe
 # widgets) - each widget row is now separately defined by the nr() subroutine and widgets
@@ -1397,273 +1213,436 @@ tie (*SBAR, 'Tk::Text', $status_bar);
 # (NB - GUI code still has lots of relic options in the pack_gui() calls - needs to be
 # tidied up a lot!)
 #
-# <label> <variable/subroutine> <widget hash reference> <frame reference>
-# with optional <length of entry widget> <column>
-#		<r = radiobutton> <option1> <option2> ... 
-#               <t = text> <width> <height> <colspan> <wrap> <optional: weight> <optional: labframe> <optional: column> <optional: filebutton> <fb orientation>
-#               <b = button> <state>
-#		<c = checkbutton> <offvalue> <onvalue>
-#		<h = hlist> <width> <height> <colspan> <columns> <optional: weight> <browse command sub> <optional: labframe>
-#		<v = canvas> <colspan> <optional: in labframe?>
-#		<l = labframe> <optional: column> <optional: rowspan>
-#		<lt = label text> <string1> <$ (for textvariable marker)> <string2> ...
+# FURTHER UPDATE: as of versions > 1.1.4a, the system has been completely re-written, providing
+# a simpler and more straightforward system with the ability to include any number of custom arguments.
+# It should be slightly faster, too, at the expense of some code verbosity.
+#
+# New format is:  
+# <widget type> <Text/variable> <widget hash reference> [more specific args] [generic Perl/Tk options]
+#
+# Widgets are packed from the left into horizontal frames defined by the nr() call
 
-my $gui_count=0;
-my $guilab_count=0;
 my @row_counter;
 
 #-------------#
 # Primer page #
 #-------------#
 
-pack_gui('Forward primer', '', 'forward_l', \$page_primerf, 'l');
-	nr(\$prf{forward_l});
-		pack_gui('Sequence', $fprimer, 'fprimerseq', \$prf{forward_f1}, 40, 0 , 2);
+pack_gui('LabFrame', 'Forward primer', 'forward_l', \$page_primerf);
+	nr(\$packed_widgets{forward_l});
+		pack_gui('Label', 'Sequence', 'fprimerseql');
+		pack_gui('Entry', \$fprimer, 'fprimerseq', 40);
 	nr();
-		pack_gui('Tm: ', $fprimer_tm, 'fprimertm', \$prl{forward_l}, 'ltg', 0, $fprimer_tm, '°C');
-		pack_gui('Length: ', $fprimer_len, 'fprimerlen', \$prl{forward_l}, 'ltg', 1, $fprimer_len, 'bases');
-		pack_gui('dS°: ', $fprimer_ds, 'fprimerds', \$prl{forward_l}, 'ltg', 0, $fprimer_ds, 'eu');
-		pack_gui('dH°: ', $fprimer_dh, 'fprimerdh', \$prl{forward_l}, 'ltg', 1, $fprimer_dh, 'kcal/mol');
-		pack_gui("dG°$pd_temperature: ", $fprimer_dg, 'fprimerds', \$prl{forward_l}, 'ltg', 0, $fprimer_dg, 'kcal/mol');
+	my $col_ref = $row_counter[-1];
+		nc(\$col_ref);
+			nr(\$row_counter[-1],0);
+			pack_gui('Label', 'Tm: ', 'fprimertm');
+			pack_gui('Label', \$fprimer_tm, 'fprimertm');
+			pack_gui('Label', '°C', 'fprimertm');
+			nr('',0);
+			pack_gui('Label', 'dS°: ', 'fprimerds');
+			pack_gui('Label', \$fprimer_ds, 'fprimerds');
+			pack_gui('Label', 'eu', 'fprimerds');
+			nr('',0);
+			pack_gui('Label', "dG°$pd_temperature: ", 'fprimerds');
+			pack_gui('Label', \$fprimer_dg, 'fprimerds');
+			pack_gui('Label', 'kcal/mol', 'fprimerds');
+		nc(\$col_ref);
+			nr(\$row_counter[-1],0);
+			pack_gui('Label', 'Length: ', 'fprimerlen');
+			pack_gui('Label', \$fprimer_len, 'fprimerlen');
+			pack_gui('Label', 'bases', 'fprimerlen');
+			nr('',0);
+			pack_gui('Label', 'dH°: ', 'fprimerdh');
+			pack_gui('Label', \$fprimer_dh, 'fprimerdh');
+			pack_gui('Label', 'kcal/mol', 'fprimerdh');
 
-pack_gui('Reverse primer', '', 'reverse_l', \$page_primerf, 'l');
-	nr(\$prf{reverse_l});
-		pack_gui('Sequence', $rprimer, 'rprimerseq', \$prl{reverse_l}, 40, 0, 2);
+
+pack_gui('LabFrame', 'Reverse primer', 'reverse_l', \$page_primerf);
+	nr(\$packed_widgets{reverse_l});
+	
+		pack_gui('Label', 'Sequence', 'rprimerseq');
+		pack_gui('Entry', \$rprimer, 'rprimerseq', 40);
 	nr();
-		pack_gui('Tm: ', $rprimer_tm, 'rprimertm', \$prl{reverse_l}, 'ltg', 0, $rprimer_tm, '°C');
-		pack_gui('Length: ', $rprimer_len, 'rprimerlen', \$prl{reverse_l}, 'ltg', 1, $rprimer_len, 'bases');
-		pack_gui('dS°: ', $rprimer_ds, 'rprimerds', \$prl{reverse_l}, 'ltg', 0, $rprimer_ds, 'eu');
-		pack_gui('dH°: ', $rprimer_dh, 'rprimerdh', \$prl{reverse_l}, 'ltg', 1, $rprimer_dh, 'kcal/mol');
-		pack_gui("dG°$pd_temperature: ", $rprimer_dg, 'fprimerds', \$prl{reverse_l}, 'ltg', 0, $rprimer_dg, 'kcal/mol');
+	$col_ref = $row_counter[-1];
+		nc(\$col_ref);
+			nr(\$row_counter[-1],0);
+			pack_gui('Label', 'Tm: ', 'rprimertm');
+			pack_gui('Label', \$rprimer_tm, 'rprimertm');
+			pack_gui('Label', '°C', 'rprimertm');
+			nr('',0);
+			pack_gui('Label', 'dS°: ', 'rprimerds');
+			pack_gui('Label', \$rprimer_ds, 'rprimerds');
+			pack_gui('Label', 'eu', 'rprimerds');
+			nr('',0);
+			pack_gui('Label', "dG°$pd_temperature: ", 'rprimerds');
+			pack_gui('Label', \$rprimer_dg, 'rprimerds');
+			pack_gui('Label', 'kcal/mol', 'rprimerds');
+		nc(\$col_ref);
+			nr(\$row_counter[-1],0);
+			pack_gui('Label', 'Length: ', 'rprimerlen');
+			pack_gui('Label', \$rprimer_len, 'rprimerlen');
+			pack_gui('Label', 'bases', 'rprimerlen');
+			nr('',0);
+			pack_gui('Label', 'dH°: ', 'rprimerdh');
+			pack_gui('Label', \$rprimer_dh, 'rprimerdh');
+			pack_gui('Label', 'kcal/mol', 'rprimerdh');
 
-pack_gui('Calculate Tm', \&get_tm, 'tmbutton', \$page_primerfb, 'b', 'active', 0);
-pack_gui('BLAST primers', \&blast_primers, 'blastbutton', \$page_primerfb, 'b', '', 1);
+pack_gui('LabFrame', 'Dimers', 'dim_l', \$page_primerf);
+	nr(\$packed_widgets{dim_l}, $frame_pady, 1);
+	pack_gui('ROText', 'Dimers', 'dim', 60, 15, -scrollbars=>'oe');
+		$packed_widgets{dim}->bind('<Key-Right>' => \&jump_to_tm);
+		$packed_widgets{dim}->bind('<Key-Left>' => \&jump_back);
 
-pack_gui('Dimers', '', 'dim', \$page_primerf, 't', 60, 15, 1, 0, 2);
-	$prf{dim}->bind('<Key-Right>' => \&jump_to_tm);
-	$prf{dim}->bind('<Key-Left>' => \&jump_back);
+nr(\$page_primerfb, 0);
+	pack_gui('Button', 'Calculate Tm', 'tmbutton', \&get_tm, 'active');
+	pack_gui('Button', 'BLAST primers', 'blastbutton', \&blast_primers);
 
-
-$prf{dim}->configure(-fg=>'grey30');
-$prf{dim}->tagConfigure('blue',
+# Grid layout
+pack_grid(qw(forward_l));
+pack_grid(qw(reverse_l));
+pack_grid(qw(dim_l));
+	
+$packed_widgets{dim}->configure(-fg=>'grey30');
+$packed_widgets{dim}->tagConfigure('blue',
 	-foreground => 'midnightblue');
-$prf{dim}->tagConfigure('red',
+$packed_widgets{dim}->tagConfigure('red',
 	-foreground => 'red');
-$prf{dim}->tagConfigure('black',
+$packed_widgets{dim}->tagConfigure('black',
 	-foreground => 'black');
 
-# Layout tweak to make the grid column take up all possible space:
+# Column and row weights
 $page_primerf->gridColumnconfigure(0,-weight=>1);
+$page_primerf->gridRowconfigure(2,-weight=>1);
 
-tie (*DIMER, 'Tk::Text',$prf{'dim'});
+
+tie (*DIMER, 'Tk::Text',$packed_widgets{'dim'});
 
 #--------------------#
 # Primer Design page #
 #--------------------#
 
-# $gui_count=0;
-# $guilab_count=0;
-# 
-pack_gui('Primer Tm', '', 'primer_tm_l', \$page_primer_designf, 'l');
-	nr(\$prl{primer_tm_l});
-		pack_gui('', $min_tm_pr, 'mintm', \$prl{primer_tm_l}, 4, '', '', '');
-		pack_gui('-', $max_tm_pr, 'maxtm', \$prl{primer_tm_l}, 4, 1, '', '°C');
-		pack_gui(' Difference ', $max_diff_pr, 'maxdiff', \$prl{primer_tm_l}, 3, 2, '', '°C');
+pack_gui('LabFrame', 'Primer Tm', 'primer_tm_l', \$page_primer_designf);
+	nr(\$packed_widgets{primer_tm_l});
+		pack_gui('Entry', \$min_tm_pr, 'mintm', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_tm_pr, 'maxtm', 3);
+		pack_gui('Label', '°C  Difference');
+		pack_gui('Entry', \$max_diff_pr, 'maxdiff', 3);
+		pack_gui('Label', '°C');
 	
-pack_gui('Primer Length', '', 'primer_len_l', \$page_primer_designf, 'l', 1);
-	nr(\$prl{primer_len_l});
-		pack_gui('', $pri_win_min_pr, 'minwin', \$prl{primer_len_l}, 4);
-		pack_gui('-', $pri_win_max_pr, 'maxwin', \$prl{primer_len_l}, 4, 1, '', 'bases');
+pack_gui('LabFrame', 'Primer Length', 'primer_len_l', \$page_primer_designf);
+	nr(\$packed_widgets{primer_len_l});
+		pack_gui('Entry', \$pri_win_min_pr, 'minwin', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$pri_win_max_pr, 'maxwin', 3);
+		pack_gui('Label', 'bases');
 			
-pack_gui('Amplified range', '', 'primer_range_l', \$page_primer_designf, 'l');
-	nr(\$prl{primer_range_l}, 2);
-		pack_gui('5\'', $max_range_5p_pr, 'maxrange5p', \$prf{primer_range_tf}, 5);
-  		pack_gui('-', $min_range_pr, 'minrange', \$prf{primer_range_tf}, 5, 1);
-  		pack_gui(' 3\'', $max_range_pr, 'maxrange', \$prf{primer_range_tf}, 5, 2);
-		pack_gui('-', $max_range_3p_pr, 'maxrange3p', \$prf{primer_range_tf}, 5, 3);
+pack_gui('LabFrame', 'Amplified range', 'primer_range_l', \$page_primer_designf);
+	nr(\$packed_widgets{primer_range_l}, 2);
+		pack_gui('Label', "5'");
+		pack_gui('Entry', \$max_range_5p_pr, 'maxrange5p', 5);
+  		pack_gui('Label', '-');
+		pack_gui('Entry', \$min_range_pr, 'minrange', 5);
+  		pack_gui('Label', " 3'");
+		pack_gui('Entry', \$max_range_pr, 'maxrange', 5);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_range_3p_pr, 'maxrange3p', 5);
 	nr('');
-		pack_gui('Amplicon size: ', '', 'minamp', \$prf{primer_ampsize_tf}, 'lt', 0, $min_ampsize_pr, '-', $max_ampsize_pr, 'bases');
+		pack_gui('Label', 'Amplicon size: ');
+		pack_gui('Label', \$min_ampsize_pr);
+		pack_gui('Label', '-');
+		pack_gui('Label', \$max_ampsize_pr);
+		pack_gui('Label', 'bases');
 	nr('', 0);
-  		pack_gui('Set from ORF', \&reset_bounds, 'primer_getgene', '', 'b', 'normal', 0);
-		pack_gui('-10', \&step_in, 'primer_stepin', '', 'b', 'normal', 1);
-		pack_gui('+10', \&step_out, 'primer_stepout','' , 'b', 'normal', 2);
+  		pack_gui('Button', 'Set from ORF', 'primer_getgene', \&reset_bounds);
+		pack_gui('Button', '-10', 'primer_stepin', \&step_in);
+		pack_gui('Button', '+10', 'primer_stepout', \&step_out);
 	
-pack_gui('Options', '', 'primer_options_l', \$page_primer_designf, 'l', 1);
- 	nr(\$prl{primer_options_l});
-		pack_gui('Exclude %GC', $exclude_gc, 'exclude_gc', \$prl{primer_options_l}, 'c', 0, 1);
-		pack_gui('GC clamp', $exclude_clamp, 'gc_clamp', \$prl{primer_options_l}, 'c', 0, 1, 1);
+pack_gui('LabFrame', 'Options', 'primer_options_l', \$page_primer_designf);
+ 	nr(\$packed_widgets{primer_options_l});
+		pack_gui('Checkbutton', 'Exclude %GC', 'exclude_gc', \$exclude_gc);
+		pack_gui('Checkbutton', 'GC clamp', 'gc_clamp', \$exclude_clamp);
  	nr();
-		pack_gui('Add 5\' F seq ', $primer_seq_5f, 'primer_seq_5f', \$prf{primer_options_seqadd}, 12, '','', ' ');
-		pack_gui('Frame', $primer_seq_5f_frame, 'primer_seq_5f_frame', \$prf{primer_options_seqadd}, 2, 1,'', ' ');
+		pack_gui('Label', "Add 5' F seq ");
+		pack_gui('Entry', \$primer_seq_5f, 'primer_seq_5f', 12);
+		pack_gui('Label', 'Frame');
+		pack_gui('Entry', \$primer_seq_5f_frame, 'primer_seq_5f_frame', 2);
 		# not currently implemented and may never be ...
 		# pack_gui('ATG', $primer_seq_5f_atg, 'primer_seq_5f_atg', '', 'c', 0, 1);
 	nr();
-		pack_gui('Add 5\' R seq ', $primer_seq_5r, 'primer_seq_5r', \$prf{primer_options_seqadd}, 12, '','', ' ');
-		pack_gui('Frame', $primer_seq_5r_frame, 'primer_seq_5r_frame', \$prf{primer_options_seqadd}, 2, 1, '', ' ');
+		pack_gui('Label', "Add 5' R seq ");
+		pack_gui('Entry', \$primer_seq_5r, 'primer_seq_5r', 12);
+		pack_gui('Label', 'Frame');
+		pack_gui('Entry', \$primer_seq_5r_frame, 'primer_seq_5r_frame', 2);
 		# pack_gui('ATG', $primer_seq_5r_atg, 'primer_seq_5r_atg', '', 'c', 0, 1);
 
-pack_gui('Sequence', '', 'seq', \$page_primer_designf, 't', 60, 6, 2, 0, 1, '', '', 1);
+pack_gui('LabFrame', 'Sequence', 'seq_l', \$page_primer_designf);
+	nr(\$packed_widgets{seq_l});
+	pack_gui('Text', 'Sequence', 'seq', 60, 6, -scrollbars=>'oe');
+	pack_osc_buttons('seq');
 
-pack_gui('Results', '', 'res', \$page_primer_designf, 'h', 60, 10, 3, 10, 2, \&browse_primer, 1);
-pack_gui('Canvas', '', 'primer_canvas', \$prl{res}, 'v', 4, 1);
+pack_gui('LabFrame', 'Results', 'res_l', \$page_primer_designf);
+	nr(\$packed_widgets{res_l}, $frame_pady, 1);
+	pack_gui('HList', '', 'res', 60, 10, 11, \&browse_primer);
+	header_create(\$packed_widgets{'res'}, @header_list_primers);
+	
+	nr();
+	pack_gui('Canvas', '', 'primer_canvas', 1, 1);
+	
+nr(\$page_primer_designfb, 0);	
+pack_gui('Button', 'Find primers', 'primerbutton', \&get_primers, 'active');
+pack_gui('Button', 'Find inwards', 'autobuttonin', \&get_primers_auto_in);
+pack_gui('Button', 'Find outwards', 'autobuttonout', \&get_primers_auto_out);
+pack_gui('Button', 'Cancel', 'primer_cancel', \&cancel);
+pack_gui('Button', 'Copy selected', 'primer_view', \&copy_selected_primers);
 
-pack_gui('Find primers', \&get_primers, 'primerbutton', \$page_primer_designfb, 'b', 'active', 0);
-pack_gui('Find inwards', \&get_primers_auto_in, 'autobuttonin', \$page_primer_designfb, 'b', 'normal', 1);
-pack_gui('Find outwards', \&get_primers_auto_out, 'autobuttonout', \$page_primer_designfb, 'b', 'normal', 2);
-pack_gui('Cancel', \&cancel, 'primer_cancel', \$page_primer_designfb, 'b', 'normal', 3);
-pack_gui('Copy selected', \&copy_selected_primers, 'primer_view', \$page_primer_designfb, 'b', 'normal', 4);
+# Grid layout
+pack_grid(qw(primer_tm_l primer_len_l));
+pack_grid(qw(primer_range_l primer_options_l));
+pack_grid(qw(seq_l -));
+pack_grid(qw(res_l -));
 
-# We need to fiddle to get the two columns looking neat:
+# Column and row weights
 $page_primer_designf->gridColumnconfigure(0,-weight=>1);
 $page_primer_designf->gridColumnconfigure(1,-weight=>1);
+$page_primer_designf->gridRowconfigure(3,-weight=>1);
 
 
 #-----------------#
 # Sequencing page #
 #-----------------#
 
-pack_gui('Primer Tm', '', 'seq_tm_l', \$page_sequencingf, 'l');
-	nr(\$prl{seq_tm_l});
-		pack_gui('', $min_tm_seq, 'smintm', \$prl{seq_tm_l}, 4, '', '', '');
-		pack_gui('-', $max_tm_seq, 'smaxtm', \$prl{seq_tm_l}, 4, 1, '', '°C');
+pack_gui('LabFrame', 'Primer Tm', 'seq_tm_l', \$page_sequencingf);
+	nr(\$packed_widgets{seq_tm_l});
+		pack_gui('Entry', \$min_tm_seq, 'smintm', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_tm_seq, 'smaxtm', 3);
+		pack_gui('Label', '°C');
 
-pack_gui('Primer Length', '', 'seq_len_l', \$page_sequencingf, 'l', 1);
-	nr(\$prl{seq_len_l});
-		pack_gui('', $pri_win_min_seq, 'sminwin', \$prl{seq_len_l}, 4);
-		pack_gui('-', $pri_win_max_seq, 'smaxwin', \$prl{seq_len_l}, 4, 1, '', 'bases');
+pack_gui('LabFrame', 'Primer Length', 'seq_len_l', \$page_sequencingf);
+	nr(\$packed_widgets{seq_len_l});
+		pack_gui('Entry', \$pri_win_min_seq, 'sminwin', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$pri_win_max_seq, 'smaxwin', 3);
+		pack_gui('Label', 'bases');
 
-pack_gui('Spacing / Coverage', '', 'seq_amp_l', \$page_sequencingf, 'l');
-	nr(\$prl{seq_amp_l}, 2);
-		pack_gui('Primers every ', $seq_spacing_min, 'sspacingmin', \$prf{primer_seq_amp_f1}, 5, '', '', '');
-		pack_gui('-', $seq_spacing_max, 'sspacingmax', \$prf{primer_seq_amp_f1}, 5, 2, '', 'bases');
+pack_gui('LabFrame', 'Spacing / Coverage', 'seq_amp_l', \$page_sequencingf);
+	nr(\$packed_widgets{seq_amp_l}, 2);
+		pack_gui('Label', 'Primers every');
+		pack_gui('Entry', \$seq_spacing_min, 'sspacingmin', 4);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$seq_spacing_max, 'sspacingmax', 4);
+		pack_gui('Label', 'bases');
 	nr('');
-		pack_gui('Range:  5\' ', $min_range_seq, 'seqminrange', \$prf{primer_seq_amp_f2}, 5);
-		pack_gui('-', $max_range_seq, 'seqmaxrange', \$prf{primer_seq_amp_f2}, 5, 2, '', ' 3\'');
+		pack_gui('Label', "Range:  5'");
+		pack_gui('Entry', \$min_range_seq, 'seqminrange', 5);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_range_seq, 'seqmaxrange', 5);
+		pack_gui('Label', "3'");
 	nr('', 0);
-		pack_gui('Set range from ORF', \&reset_bounds, 'seq_getgene', '', 'b', 'normal', 0);
+		pack_gui('Button', 'Set range from ORF', 'seq_getgene', \&reset_bounds);
 		
-pack_gui('Options', '', 'seq_options_l', \$page_sequencingf, 'l', 1);  
-	nr(\$prl{seq_options_l}, 0);
-		pack_gui('Exclude %GC', $exclude_gc_seq, 'exclude_gc_seq', \$prf{primer_seq_options_f1}, 'c', 0, 1);
-		pack_gui('GC clamp', $exclude_clamp_seq, 'gc_clamp_seq', \$prf{primer_seq_options_f1}, 'c', 0, 1, 1);
+pack_gui('LabFrame', 'Options', 'seq_options_l', \$page_sequencingf);  
+	nr(\$packed_widgets{seq_options_l}, 0);
+		pack_gui('Checkbutton', 'Exclude %GC', 'exclude_gc_seq', \$exclude_gc_seq);
+		pack_gui('Checkbutton', 'GC clamp', 'gc_clamp_seq', \$exclude_clamp_seq);
 	nr('', 0);
-		pack_gui('Exclude self-complimentarity >', $exclude_pd_seq, 'exclude_pd_seq', \$prf{primer_seq_options_f2}, 'c', 0, 1);
-		pack_gui('-', $seq_pd_min, 'spdmin', \$prf{primer_seq_options_f2}, 3, 1, '', 'dG°37');
+		pack_gui('Checkbutton', 'Exclude self-complimentarity > -', 'exclude_pd_seq', \$exclude_pd_seq);
+		pack_gui('Entry', \$seq_pd_min, 'spdmin', 3);
+		pack_gui('Label', 'dG°37');
 
-pack_gui('Sequence', '', 'seq_seq', \$page_sequencingf, 't', 60, 6, 2, 0, 1, '', '', 1);
+pack_gui('LabFrame', 'Sequence', 'seq_seq_l', \$page_sequencingf);
+	nr(\$packed_widgets{seq_seq_l});
+	pack_gui('Text', 'Sequence', 'seq_seq', 60, 6, -scrollbars=>'oe');
+	pack_osc_buttons('seq_seq');
 
-pack_gui('Results', '', 'seq_res', \$page_sequencingf, 'h', 60, 10, 3, 5, 2, \&browse_primer, 1);
-pack_gui('Canvas', '', 'seq_canvas', \$prl{seq_res}, 'v', 4, 1);
-
-pack_gui('Find primers', \&get_seq_primers, 'seq_button', \$page_sequencingfb, 'b', 'active', 0);
-pack_gui('Cancel', \&cancel, 'seq_cancel', \$page_sequencingfb, 'b', 'normal', 1);
-pack_gui('Copy selected', \&copy_selected_primers, 'seq_view', \$page_sequencingfb, 'b', 'normal', 2);
+pack_gui('LabFrame', 'Results', 'seq_res_l', \$page_sequencingf);
+	nr(\$packed_widgets{seq_res_l}, $frame_pady, 1);
+	pack_gui('HList', '', 'seq_res', 60, 10, 11, \&browse_primer);
+	header_create(\$packed_widgets{'seq_res'}, @header_list_primers);
 	
+	nr();
+	pack_gui('Canvas', '', 'seq_canvas', 1, 1);
+
+nr(\$page_sequencingfb, 0);
+pack_gui('Button', 'Find primers', 'seq_button', \&get_seq_primers, 'active');
+pack_gui('Button', 'Cancel', 'seq_cancel', \&cancel);
+pack_gui('Button', 'Copy selected', 'seq_view', \&copy_selected_primers);
+
+# Grid layout
+pack_grid(qw(seq_tm_l seq_len_l));
+pack_grid(qw(seq_amp_l seq_options_l));
+pack_grid(qw(seq_seq_l -));
+pack_grid(qw(seq_res_l -));
+
+# Column and row weights
 $page_sequencingf->gridColumnconfigure(0,-weight=>1);
 $page_sequencingf->gridColumnconfigure(1,-weight=>1);
+$page_sequencingf->gridRowconfigure(3,-weight=>1);
 
 	
 #----------------------------#
 # Bisulphite sequencing page #
 #----------------------------#
 
-# $gui_count=$guilab_count=0;
-pack_gui('Primer Tm', '', 'bisul_tm_l', \$page_bisul_seqf, 'l');
-	nr(\$prl{bisul_tm_l});
-		pack_gui('', $min_tm_bs, 'mintm', \$prl{bisul_tm_l}, 4);
-		pack_gui('-', $max_tm_bs, 'maxtm', \$prl{bisul_tm_l}, 4, 2, '', '°C');
-		pack_gui(' Difference ', $max_diff_bs, 'maxdiff', \$prl{bisul_tm_l}, 3, 3, '', '°C');
+pack_gui('LabFrame', 'Primer Tm', 'bisul_tm_l', \$page_bisul_seqf);
+	nr(\$packed_widgets{bisul_tm_l});
+		pack_gui('Entry', \$min_tm_bs, 'bisul_mintm', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_tm_bs, 'bisul_maxtm', 3);
+		pack_gui('Label', '°C  Difference');
+		pack_gui('Entry', \$max_diff_bs, 'bisul_maxdiff', 3);
+		pack_gui('Label', '°C');
 
-pack_gui('Primer Length', '', 'bisul_len_l', \$page_bisul_seqf, 'l', 1);
-	nr(\$prl{bisul_len_l});
-		pack_gui('', $pri_win_min_bs, 'minwin', \$prl{bisul_len_l}, 4);
-		pack_gui('-', $pri_win_max_bs, 'maxwin', \$prl{bisul_len_l}, 4, 2, '', 'bases');
+pack_gui('LabFrame', 'Primer Length', 'bisul_len_l', \$page_bisul_seqf);
+	nr(\$packed_widgets{bisul_len_l});
+		pack_gui('Entry', \$pri_win_min_bs, 'minwin', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$pri_win_max_bs, 'maxwin', 3);
+		pack_gui('Label', 'bases');
 
-pack_gui('Amplified range', '', 'bisul_range_l', \$page_bisul_seqf, 'l');
-	nr(\$prl{bisul_range_l}, 2);
-		pack_gui('5\'', $max_range_5p_bs, 'bisul_maxrange5p', \$prf{bisul_range_tf}, 5);
- 		pack_gui('-', $min_range_bs, 'bisul_minrange', \$prf{bisul_range_tf}, 5, 1);
-  		pack_gui(' 3\'', $max_range_bs, 'bisul_maxrange', \$prf{bisul_range_tf}, 5, 2);
-		pack_gui('-', $max_range_3p_bs, 'bisul_maxrange3p', \$prf{bisul_range_tf}, 5, 3);
+pack_gui('LabFrame', 'Amplified range', 'bisul_range_l', \$page_bisul_seqf);
+	nr(\$packed_widgets{bisul_range_l}, 2);
+		pack_gui('Label', "5'");
+		pack_gui('Entry', \$max_range_5p_bs, 'bisul_maxrange5p', 5);
+ 		pack_gui('Label', '-');
+		pack_gui('Entry', \$min_range_bs, 'bisul_minrange', 5);
+  		pack_gui('Label', " 3'");
+		pack_gui('Entry', \$max_range_bs, 'bisul_maxrange', 5);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_range_3p_bs, 'bisul_maxrange3p', 5);
 	nr('');
-		pack_gui('Amplicon size: ', '', 'bisul_minamp', \$prf{bisul_ampsize_tf}, 'lt', 0, $min_ampsize_bs, '-', $max_ampsize_bs, 'bases');
+		pack_gui('Label', 'Amplicon size: ');
+		pack_gui('Label', \$min_ampsize_bs);
+		pack_gui('Label', '-');
+		pack_gui('Label', \$max_ampsize_bs);
+		pack_gui('Label', 'bases');
 	nr('', 0);
-  		pack_gui('Set from CpG island', \&reset_bounds, 'bisul_getcpg', '', 'b', 'normal');
-		pack_gui('-10', \&step_in, 'primer_stepin', '', 'b', 'normal');
-		pack_gui('+10', \&step_out, 'primer_stepout', '', 'b', 'normal');
+  		pack_gui('Button', 'Set from CpG island', 'bisul_getcpg', \&reset_bounds);
+		pack_gui('Button', '-10', 'primer_stepin', \&step_in);
+		pack_gui('Button', '+10', 'primer_stepout', \&step_out);
 
-pack_gui('Options', '', 'bisul_options_l', \$page_bisul_seqf, 'l', 1);
-	nr(\$prl{bisul_options_l}, 0);
-		pack_gui('Exclude CpG', $exclude_cpg, 'bisul_exclude_cpg', \$prl{bisul_options_l}, 'c', 0, 1);
-		pack_gui('Require 3\' C', $exclude_3c, 'bisul_exclude_cs', \$prl{bisul_options_l}, 'c', 0, 1);
+pack_gui('LabFrame', 'Options', 'bisul_options_l', \$page_bisul_seqf);
+	nr(\$packed_widgets{bisul_options_l}, 0);
+		pack_gui('Checkbutton', 'Exclude CpG', 'bisul_exclude_cpg', \$exclude_cpg);
+		pack_gui('Checkbutton', "Require 3' C", 'bisul_exclude_cs', \$exclude_3c);
 	nr('', 0);
-		pack_gui('Repeats / runs post conversion', $pre_bs, 'bisul_pre_bs', \$prl{bisul_options_l}, 'c', 0, 1, 2);
+		pack_gui('Checkbutton', 'Repeats / runs post conversion', 'bisul_pre_bs', \$pre_bs);
 	nr();	
-		pack_gui('Min C%', $bisul_min_c, 'bisul_min_c', \$prl{bisul_options_l}, 4, 2);
+		pack_gui('Label', 'Minimum primer C content ');
+		pack_gui('Entry', \$bisul_min_c, 'bisul_min_c', 4);
+		pack_gui('Label', '%');
 
-pack_gui('Sequence', '', 'bisul_seq', \$page_bisul_seqf, 't', 60, 6, 2, 0, 1, '', '', 1);
+pack_gui('LabFrame', 'Sequence', 'bisul_seq_l', \$page_bisul_seqf);
+	nr(\$packed_widgets{bisul_seq_l});
+	pack_gui('Text', 'Sequence', 'bisul_seq', 60, 6, -scrollbars=>'oe');
+	pack_osc_buttons('bisul_seq');
 
-pack_gui('Results', '', 'bisul_res', \$page_bisul_seqf, 'h', 60, 10, 3, 10, 2, \&browse_bisulphite, 1);
-pack_gui('Canvas', '', 'bisul_canvas', \$prl{bisul_res}, 'v', 4, 1);
+pack_gui('LabFrame', 'Results', 'bisul_res_l', \$page_bisul_seqf);
+	nr(\$packed_widgets{bisul_res_l}, $frame_pady, 1);
+	pack_gui('HList', '', 'bisul_res', 60, 10, 11, \&browse_bisulphite);
+	header_create(\$packed_widgets{'bisul_res'}, @header_list_primers);
+	
+	nr();
+	pack_gui('Canvas', '', 'bisul_canvas', 1, 1);
 
-pack_gui('Find primers', \&get_bisulphite, 'bisul_button', \$page_bisul_seqfb, 'b', 'active', 0);
-pack_gui('Find inwards', \&get_primers_auto_in, 'bisul_autobuttonin', \$page_bisul_seqfb, 'b', 'normal', 1);
-pack_gui('Find outwards', \&get_primers_auto_out, 'bisul_autobuttonout', \$page_bisul_seqfb, 'b', 'normal', 2);
-pack_gui('Cancel', \&cancel, 'bisul_cancel', \$page_bisul_seqfb, 'b', 'normal', 3);
-pack_gui('Copy selected', \&copy_selected_primers, 'bisul_view', \$page_bisul_seqfb, 'b', 'normal', 4);
+nr(\$page_bisul_seqfb, 0);	
+pack_gui('Button', 'Find primers', 'bisul_button', \&get_bisulphite, 'active');
+pack_gui('Button', 'Find inwards', 'bisul_autobuttonin', \&get_primers_auto_in);
+pack_gui('Button', 'Find outwards', 'bisul_autobuttonout', \&get_primers_auto_out);
+pack_gui('Button', 'Cancel', 'bisul_cancel', \&cancel);
+pack_gui('Button', 'Copy selected', 'bisul_view', \&copy_selected_primers);
 
-# More column tidying ...
+# Grid layout
+pack_grid(qw(bisul_tm_l bisul_len_l));
+pack_grid(qw(bisul_range_l bisul_options_l));
+pack_grid(qw(bisul_seq_l -));
+pack_grid(qw(bisul_res_l -));
+
+# Column and row weights
 $page_bisul_seqf->gridColumnconfigure(0,-weight=>1);
 $page_bisul_seqf->gridColumnconfigure(1,-weight=>1);
+$page_bisul_seqf->gridRowconfigure(3,-weight=>1);
+
 
 #-----------#
 # QPCR page #
 #-----------#
 
-# $gui_count=0;
-# $guilab_count=0;
-pack_gui('Primer Tm', '', 'qprimer_tm_l', \$page_qpcrf, 'l');
-	nr(\$prl{qprimer_tm_l});
-		pack_gui('', $min_tm_q, 'qmintm', \$prl{qprimer_tm_l}, 4);
-		pack_gui('-', $max_tm_q, 'qmaxtm', \$prl{qprimer_tm_l}, 4, 2, '', '°C');
-		pack_gui(' Difference ', $max_diff_q, 'qmaxdiff', \$prl{qprimer_tm_l}, 3, 3, '', '°C');
+pack_gui('LabFrame', 'Primer Tm', 'qprimer_tm_l', \$page_qpcrf);
+	nr(\$packed_widgets{qprimer_tm_l});
+		pack_gui('Entry', \$min_tm_q, 'qmintm', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_tm_q, 'qmaxtm', 3);
+		pack_gui('Label', '°C  Difference');
+		pack_gui('Entry', \$max_diff_q, 'qmaxdiff', 3);
+		pack_gui('Label', '°C');
 
-pack_gui('Primer Length', '', 'qprimer_len_l', \$page_qpcrf, 'l', 1);
-	nr(\$prl{qprimer_len_l});
-		pack_gui('', $pri_win_min_q, 'qminwin', \$prl{qprimer_len_l}, 4);
-		pack_gui('-', $pri_win_max_q, 'qmaxwin', \$prl{qprimer_len_l}, 4, 2, '', 'bases');
+pack_gui('LabFrame', 'Primer Length', 'qprimer_len_l', \$page_qpcrf);
+	nr(\$packed_widgets{qprimer_len_l});
+		pack_gui('Entry', \$pri_win_min_q, 'qminwin', 3);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$pri_win_max_q, 'qmaxwin', 3);
+		pack_gui('Label', 'bases');
 
-pack_gui('Amplicon size', '', 'qprimer_amp_l', \$page_qpcrf, 'l');
-	nr(\$prl{qprimer_amp_l});
-		pack_gui('', $min_ampsize_q, 'qminamp', \$prl{qprimer_amp_l}, 5);
-		pack_gui('-', $max_ampsize_q, 'qmaxamp', \$prl{qprimer_amp_l}, 5, 2, '', 'bases');
+pack_gui('LabFrame', 'Amplicon size', 'qprimer_amp_l', \$page_qpcrf);
+	nr(\$packed_widgets{qprimer_amp_l});
+		pack_gui('Entry', \$min_ampsize_q, 'qminamp', 4);
+		pack_gui('Label', '-');
+		pack_gui('Entry', \$max_ampsize_q, 'qmaxamp', 4);
+		pack_gui('Label', 'bases');
 	nr();
-		pack_gui('Limit primers to exon(s)', $ie_limit, 'qie_limit', '', 'c', 0, 1);
-		pack_gui('', $ie_limit_5p, 'qie_limit_5p', '',3);
-		pack_gui('-', $ie_limit_3p, 'qie_limit_3p', '', 3); 	
+		pack_gui('Checkbutton', 'Limit primers to exon(s)', 'qie_limit', \$ie_limit);
+		pack_gui('Entry', \$ie_limit_5p, 'qie_limit_5p', 3);
+		pack_gui('Label', '-'); 
+		pack_gui('Entry', \$ie_limit_3p, 'qie_limit_3p', 3); 	
 	
-pack_gui('Options', '', 'qprimer_options_l', \$page_qpcrf, 'l', 1);
-	nr(\$prl{qprimer_options_l}, 0);
-		pack_gui('Exclude %GC', $exclude_gc, 'qexclude_gc', \$prf{qprimer_options_tf}, 'c', 0, 1);
-		pack_gui('GC clamp', $exclude_clamp, 'qgc_clamp', \$prf{qprimer_options_tf}, 'c', 0, 1, 2);
+pack_gui('LabFrame', 'Options', 'qprimer_options_l', \$page_qpcrf);
+	nr(\$packed_widgets{qprimer_options_l}, 0);
+		pack_gui('Checkbutton', 'Exclude %GC', 'qexclude_gc', \$exclude_gc);
+		pack_gui('Checkbutton', 'GC clamp', 'qgc_clamp', \$exclude_clamp);
 	nr();
-		pack_gui('Overlap intron/exon boundary by', $ie_overlap, 'qie_overlap', '', 'c', 0, 1);
-		pack_gui('', $exclude_ie, 'qexclude_ie', \$prl{qprimer_options_l}, 3, '', '', 'bases');
+		pack_gui('Checkbutton', 'Overlap intron/exon boundary by', 'qie_overlap', \$ie_overlap);
+		pack_gui('Entry', \$exclude_ie, 'qexclude_ie', 3);
+		pack_gui('Label', 'bases');
 
-pack_gui('Genomic sequence', '', 'qdna_seq', \$page_qpcrf, 't', 25, 5, 1, 0, 1, '', '', 1, 1);
-pack_gui('mRNA sequence', '', 'qmrna_seq', \$page_qpcrf, 't', 25, 5, 1, 0, 1, '', 1, 1, 1);
+pack_gui('LabFrame', 'Genomic sequence', 'qdna_seq_l', \$page_qpcrf);
+	nr(\$packed_widgets{qdna_seq_l});
+	pack_gui('Text', '', 'qdna_seq', 25, 6, -scrollbars=>'oe');
+	pack_osc_buttons('qdna_seq');
+		
+pack_gui('LabFrame', 'mRNA sequence', 'qmrna_seq_l', \$page_qpcrf);
+	nr(\$packed_widgets{qmrna_seq_l});
+	pack_gui('Text', '', 'qmrna_seq', 25, 6, -scrollbars=>'oe');
+	pack_osc_buttons('qmrna_seq');
 
-pack_gui('Results', '', 'qpcr_res', \$page_qpcrf, 'h', 60, 10, 3, 10, 2, \&browse_primer, 1);
-pack_gui('Canvas', '', 'qprimer_canvas', \$prl{qpcr_res}, 'v', 4, 1);
+pack_gui('LabFrame', 'Results', 'qpcr_res_l', \$page_qpcrf);
+	nr(\$packed_widgets{qpcr_res_l}, $frame_pady, 1);
+	pack_gui('HList', '', 'qpcr_res', 60, 10, 11, \&browse_primer);
+	header_create(\$packed_widgets{'qpcr_res'}, @header_list_primers);
+	
+	nr();
+	pack_gui('Canvas', '', 'qprimer_canvas', 1, 1);
 
-pack_gui('Find primers', \&get_qprimers, 'qprimerbutton', \$page_qpcrfb, 'b', 'active', 0);
-pack_gui('Cancel', \&cancel, 'qprimer_cancel', \$page_qpcrfb, 'b', 'normal', 1);
-pack_gui('Copy selected', \&copy_selected_primers, 'qprimer_view', \$page_qpcrfb, 'b', 'normal', 2);
-pack_gui('Spidey output', \&view_spidey_out, 'qprimer_spidey', \$page_qpcrfb, 'b', 'normal', 3);
+nr(\$page_qpcrfb, 0);
+pack_gui('Button', 'Find primers', 'qprimerbutton', \&get_qprimers, 'active');
+pack_gui('Button', 'Cancel', 'qprimer_cancel', \&cancel);
+pack_gui('Button', 'Copy selected', 'qprimer_view', \&copy_selected_primers);
+pack_gui('Button', 'View intron/exon structure', 'qprimer_view_ie', \&view_intron_exon_structure);
+pack_gui('Button', 'Spidey output', 'qprimer_spidey', \&view_spidey_out);
 
-# We need to fiddle to get the two columns looking neat:
+# Grid layout
+pack_grid(qw(qprimer_tm_l qprimer_len_l));
+pack_grid(qw(qprimer_amp_l qprimer_options_l));
+pack_grid(qw(qdna_seq_l qmrna_seq_l));
+pack_grid(qw(qpcr_res_l -));
+
+# Column and row weights
 $page_qpcrf->gridColumnconfigure(0,-weight=>1);
 $page_qpcrf->gridColumnconfigure(1,-weight=>1);
+$page_qpcrf->gridRowconfigure(3,-weight=>1);
+
 
 #-------------#
 # Window icon #
@@ -1693,8 +1672,6 @@ my $sort_prev = 10;
 
 $popup_sort = $top->Menu(-menuitems => [
 		[cascade => 'Sort primers by ...', -menuitems => [
-			# [command => 'Sort primers:', -state=>'disabled'],
-			# '-',
 			[command => 'Forward position', -command => [\&sort_primers, 1]],
 			[command => '  ... length', -command => [\&sort_primers, 2]],
 			[command => '  ... Tm', -command => [\&sort_primers, 3]],
@@ -1704,7 +1681,8 @@ $popup_sort = $top->Menu(-menuitems => [
 			[command => '  ... Tm', -command => [\&sort_primers, 7]],
 			'-',
 			[command => 'Amplicon size', -command => [\&sort_primers, 9]],
-			[command => 'Dimer dG', -command => [\&sort_primers, 10]],
+			[command => 'Extensible Dimer dG', -command => [\&sort_primers, 10]],
+			[command => 'Full Dimer dG', -command => [\&sort_primers, 13]],
 			'-',
 			[Checkbutton => 'Reversed', -variable => \$sort_reverse, -command =>[\&sort_primers, "r"]],
 		]],
@@ -1732,6 +1710,13 @@ my $popup_text = $top->Menu(-menuitems => [
 		'-',
 		[Button => 'Reverse complement', -command => [\&reverse_complement, \$text_widget_ref]],
 		]);
+
+# Minimize the dosbox if we're running as a standalone executable ...
+if ($win_exe && !check_packages("Win32::GUI")) {
+	# Use GUI::Hide if you want to hide the box, but personally I'd rather leave
+	# the console visible in case of debugging info.
+	Win32::GUI::Minimize(scalar(Win32::GUI::GetPerlWindow()));
+}
 
 # Show the main window
 $top->deiconify();
@@ -1880,363 +1865,183 @@ sub read_sock {
 # the job done, keeps things consistent, and writing new gui code (eg, the
 # preferences dialogue) is a matter of minutes to do ...
 
+# sub nr {
+	# # New row signal
+	# my ($reference, $pady, $fill) = @_;
+	# 
+	# $reference ||= $old_reference;
+	# $pady = $frame_pady unless defined($pady);
+	# $fill ||= 'x';
+		# 
+	# push @row_counter, $$reference->Frame(
+			# )->pack(-side=>'top', -anchor=>'nw', -pady=>$pady, -padx=>2, -fill=>$fill, -expand=>1);
+	# $old_reference = $reference;
+# }
+
 sub nr {
 	# New row signal
-	my ($reference, $pady) = @_;
+	my ($reference, $pady, $expand) = @_;
 	$reference ||= $old_reference;
+		
+	$expand ||= 0;
+	my $fill = $expand ? 'both' : 'x';
 	
 	$pady = $frame_pady unless defined($pady);
 	
 	push @row_counter, $$reference->Frame(
-			)->pack(-side=>'top', -anchor=>'w', -pady=>$pady, -padx=>0);
+			)->pack(-side=>'top', -anchor=>'nw', -expand=>$expand, -fill=>$fill, -pady=>$pady, -padx=>3);
 	$old_reference = $reference;
-	return;
 }
 
-sub pack_gui {		
-	my ($label, $reference, $widget_name, $widget_reference) = @_; 
-	my ($col, $colspan, $len, $wrap, $scrollbars, $widget_ref, $pady, $pack);
+
+sub nc {
+	# New column signal
+	my ($reference, $padx, $pady) = @_;
+	$reference ||= $old_reference;
 	
-	# Check for signals ...
-	if ($_[4] eq "t") {
-		
-		#------------#
-		# Text entry #
-		#------------#
-		
-		if ($_[8] == 1) {
-			$wrap = "none";
-			$scrollbars = "osoe";
-		} elsif ($_[8] == 2) {
-			$wrap = "none";
-			$scrollbars = "s";
-		} elsif ($_[8] == 3) {
-			$wrap = "word";
-			$scrollbars = "oe";
-		} else {
-			$wrap = "char";
-			$scrollbars = "oe";
-		}
-		
-		$col = ($_[11] ? $_[11] : 0);
-		if ($_[11]) {
-			$gui_count--
-		}
+	$padx = 4 unless defined($padx);
+	$pady = $frame_pady unless defined($pady);
+	
+	push @row_counter, $$reference->Frame(
+			)->pack(-side=>'left', -anchor=>'nw', -pady=>$pady, -padx=>$padx);
+	$old_reference = $reference;
+}
 
-		$colspan = ($_[7] ? $_[7] : 1);
-		
-		my $side =  'left'; 
-		my $bside = 'top';
-		my $text_ref;
-		
-		if ($_[9]) {
-			$prl{"$widget_name"} = $$widget_reference->LabFrame(
-					-label=>"$label",
-					-labelside=>'acrosstop',
-				)->grid(-column=>$col, -row=>$gui_count, -columnspan=>$colspan, -sticky=>'nsew', -padx=>4);
-			$text_ref = \$prl{"$widget_name"};
-		} else {
-			$text_ref = $widget_reference;
-		}
-		
-		my $widget_type = ($_[12]) ? 'Text' : 'ROText';
-		
-		$prf{"$widget_name"}=$$text_ref->Scrolled($widget_type,
-				-scrollbars => $scrollbars,
-				-relief => 'groove',
-				-bg => '#eeeeee',
-				-wrap => $wrap,
-				-width => $_[5],
-				-height => $_[6],
-			)->pack(-expand=>1, -fill=>'both', -side=>$side, -padx=>2, -pady=>2);
-		# button flag?
-		if ($_[12]) {
-			#open/save/clear button stuff ...
-			$prb{"$widget_name open"}=pack_button($prl{$widget_name}, $top->Pixmap(-data => $icon_dna_open), [\&open_seq, \$prf{$widget_name}])
-					->pack(-side=>$bside, -anchor=>'w', -fill=>'x');
-			$Balloon->attach($prb{"$widget_name open"}, -balloonposition => 'mouse', -balloonmsg => "Open DNA sequence");
-			
-			$prb{"$widget_name save"}=pack_button($prl{"$widget_name"}, $top->Pixmap(-data => $icon_dna_save), [\&save_seq, \$prf{"$widget_name"}])
-					->pack(-side=>$bside, -anchor=>'w', -fill=>'x');
-			$Balloon->attach($prb{"$widget_name save"}, -balloonposition => 'mouse', -balloonmsg => "Save DNA sequence");
-			
-			$prb{"$widget_name clear"}=pack_button($prl{"$widget_name"}, $top->Pixmap(-data => $icon_clear), [\&clear_text, \$prf{"$widget_name"}])
-					->pack(-side=>$bside, -anchor=>'w', -fill=>'x');
-			$Balloon->attach($prb{"$widget_name clear"}, -balloonposition => 'mouse', -balloonmsg => "Clear sequence");
-			
-			my $text_widget = \$prf{"$widget_name"};
-			$$text_widget->menu(undef);
-			$$text_widget->bind("<3>", [\&menu_text, \$prf{"$widget_name"}, $widget_name]);
-		}
-		
-		if ($_[9]) {
-			$$widget_reference->gridRowconfigure($gui_count, -weight=>$_[9]);
-		}
-		$widget_ref=\$prf{"$widget_name"};
-		bind_mousewheel($$widget_ref);
-	} elsif ($_[4] eq "h") {
-		
-		#-------------#
-		# hlist entry #
-		#-------------#
-		
-		my $sub=$_[10];
-		
-		if ($_[8]) {
-			$wrap = "none";
-			$scrollbars = "osoe";
-		} else {
-			$wrap = "char";
-			$scrollbars = "oe";
-		}
 
-		$colspan = ($_[7] ? $_[7] : 1);
+sub pack_gui {
+	my ($widget_type, $textvariable, $widget_name, @args) = @_;
+	my $top_reference = $row_counter[-1];
+	$widget_name||='null'; # makes it easy for labels, etc, that don't need balloon messages
+	my $widget_ref = \$packed_widgets{$widget_name};
 		
-		$prl{$widget_name} = $$widget_reference->LabFrame(
-				-label=>"$label",
-				-labelside=>'acrosstop',
-			)->grid(-column=>0, -row=>$gui_count, -columnspan=>$colspan, -sticky=>'nsew', -padx=>4);
-		
-		$prf{$widget_name}=$prl{$widget_name}->Scrolled('HList',
-				-scrollbars => $scrollbars,
-				-relief => 'groove',
-				-bg => '#eeeeee',
-				-width => $_[5],
-				-height => $_[6],
-				# -font => $hlist_font,
-				-header => 1,
-				-selectmode => 'extended',
-				-columns => $_[8],
-				-browsecmd => \&$sub,
-				-command => \&hlist_command,
-			)->pack(-expand=>1, -fill=>'both', -padx=>2, -pady=>2);
-		
-		if ($_[9]) {
-			$$widget_reference->gridRowconfigure($gui_count, -weight=>$_[9]);
-		}
-		
-		# various primer bindings ...
-		# (assume the only use of Hlist is for primer display)
-		my $hlist = \$prf{"$widget_name"};
-		bind_mousewheel($$hlist);
-		header_create($hlist, $widget_name);	
-		$widget_ref=\$prf{$widget_name};		
-	} elsif ($_[4] eq "b") {
-		
-		#--------#
-		# Button #
-		#--------#
-		
-		$prb{"$widget_name"}=($widget_reference ? $$widget_reference : $row_counter[-1])->Button(
-				-text=>"$label",
-				-padx=>5,
-				-pady=>$button_pady,
-				-command=>\$_[1],
-				-state=>($_[9] ? $_[9] : 'normal'),
-				-default=>($_[5] ? $_[5] : 'normal'),
-			)->pack(-side=>'left', -anchor=>'w', -pady=>$button_pack_pady, -padx=>$button_pack_padx);
-		$widget_ref=\$prb{"$widget_name"};
-	} elsif ($_[4] eq "v") {
-		
-		#--------#
-		# Canvas #
-		#--------#
-		
-		$prb{"$widget_name info"}=pack_button($$widget_reference, $top->Pixmap(-data => $icon_info), \&canvas_info)
-				->pack(-side=>'right', -expand=>0, -anchor=>'e', -fill=>'none');
-			$Balloon->attach($prb{"$widget_name info"}, -balloonposition => 'mouse', -balloonmsg => "Graphical display help");
-		$prb{"$widget_name magnify"}=pack_button($$widget_reference, $top->Pixmap(-data => $icon_magnify), [\&dna_magnify, 0])
-				->pack(-side=>'right', -expand=>0, -anchor=>'e', -fill=>'none');
-			$Balloon->attach($prb{"$widget_name magnify"}, -balloonposition => 'mouse', -balloonmsg => "Magnified view");
-		
-		$prf{"$widget_name"}=$$widget_reference->Canvas(
-				-height=>$dna_canvas_height,
-			)->pack(-expand=>1, -fill=>'x', -pady=>2, -padx=>6, -side=>'left');
-		
-		# Bindings for DNA canvas
-		my $canvas = \$prf{"$widget_name"};
-		$$canvas->CanvasBind('<B1-Motion>' => sub {items_drag($Tk::event->x, $canvas)});
-		$$canvas->CanvasBind('<B2-Motion>' => sub {amplicon_drag($Tk::event->x, $canvas)});
-		$$canvas->CanvasBind('<1>' => sub {items_drag($Tk::event->x, $canvas)});
-		$$canvas->CanvasBind('<2>' => sub {amplicon_drag($Tk::event->x, $canvas)});
-		$$canvas->CanvasBind('<Control-B1-Motion>' => sub {amplicon_drag($Tk::event->x, $canvas)});
-		$$canvas->CanvasBind('<Control-1>' => sub {amplicon_drag($Tk::event->x, $canvas)});
-		$$canvas->CanvasBind('<3>' => sub {dna_magnify($Tk::event->x)});
-		$$canvas->CanvasBind('<Control-3>', \&draw_dna);
-
-		$widget_ref=\$prf{"$widget_name"};
-	} elsif ($_[4] eq "c") {
-		
-		#--------------#
-		# Check button #
-		#--------------#
-
-		$prc{"$widget_name"}=$row_counter[-1]->Checkbutton(
-				-offvalue=>"$_[5]",
-				-onvalue=>"$_[6]",
-				# -font => $font,
-				-text=>$label,
-				-pady=>$check_pady,
-				-variable=>\$_[1]
-			)->pack(-side=>'left', -anchor=>'w', -pady=>0, -ipady=>0);
-		$widget_ref=\$prc{"$widget_name"};
-	} elsif ($_[4] eq "l") {
-		
-		#----------#
-		# LabFrame #
-		#----------#
-		
-		$col = ($_[5] ? $_[5] : 0);
-		if ($_[5]) {
-			$guilab_count--
-		}
-		
-		my $rowspan = ($_[6] ? $_[6] : 1);
-
-		$prf{"$widget_name"}=$$widget_reference->LabFrame(
-					-label=>"$label",
-					-labelside=>'acrosstop',
-				)->grid(-column=>$col, -row=>$guilab_count, -rowspan=>$rowspan, -sticky=>'nswe', -padx=>4);
-		$prl{"$widget_name"}=$prf{"$widget_name"}->Frame(
-				)->pack(-anchor=>'nw', -expand=>'1', -fill=>'none');
-		$guilab_count++;
-		$widget_ref=\$prf{"$widget_name"};
-	} elsif ($_[4] eq "lt") {
-		
-		#------------#
-		# label text #
-		#------------#
-		
-		$len = @_ -1;
-
-		$prl{$widget_name}=$row_counter[-1]->Label(
-				-text=>$label,
-				-font => $font,
-				-justify=>'left'
-			)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-		
-		for my $i (6 .. $len) {
-			# Very messy, but it works ...
-			if (defined($_[$i]) && ($_[$i] =~ /^[^\d]/)) {
-				$prl{"$widget_name$i"}=$row_counter[-1]->Label(
-						-text=>$_[$i],
-						# -font => $font,
-						-justify=>'left',
-					)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-			} else {
-				$prl{"$widget_name$i"}=$row_counter[-1]->Label(
-						# -font => $font,
-						-textvariable=>\$_[$i],
-						-justify=>'right',
-					)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-			}
-		}
-		$widget_ref=\$prl{"$widget_name"};
-	} elsif ($_[4] eq "ltg") {
-		
-		#-----------------#
-		# label text grid #
-		#-----------------#
-		
-		$col = ($_[5] ? $_[5] : 0);
-		$gui_count-- unless $col == 0;
-		$len = @_ -1;
-		
-		$prf{$widget_name}=$row_counter[-1]->Frame(
-				)->grid(-column=>$col, -row=>$gui_count, -sticky=>'w', -pady=>0, -padx=>4);
-
-		$prl{$widget_name}=$prf{$widget_name}->Label(
-				-text=>$label,
-				# -font => $font,
-				-justify=>'left'
-			)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-		
-		for my $i (6 .. $len) {
-			# Very messy, but it works ...
-			if (defined($_[$i]) && ($_[$i] =~ /^[^\d]/)) {
-				$prl{"$widget_name$i"}=$prf{$widget_name}->Label(
-						-text=>$_[$i],
-						# -font => $font,
-						-justify=>'left',
-					)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-			} else {
-				$prl{"$widget_name$i"}=$prf{$widget_name}->Label(
-						# -font => $font,
-						-textvariable=>\$_[$i],
-						-justify=>'right',
-					)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-			}
-		}
-		$widget_ref=\$prf{"$widget_name"};
-
-	} elsif ($_[4] eq "f") {
-		
-		#-------#
-		# Frame #
-		#-------#
-		
-		$pady = (defined($_[5]) ? $_[5] : 2);
-		$prf{$widget_name}=$$widget_reference->Frame(
-				)->pack(-side=>'top', -anchor=>'w', -pady=>$pady, -padx=>0);
-		$widget_ref=\$prf{$widget_name};
-	} elsif ($_[4] eq "be") {
-		
-		#--------------#
-		# Browse Entry #
-		#--------------#
-		
-		my $array_ref = $_[6];
-		my $width = ($_[7] ? $_[7] : 20);
-		my $listwidth = ($_[8] ? $_[8] : undef);
-		$prl{$widget_name}=$row_counter[-1]->Label(
-				-text=>$label,
-				-font => $font,
-				-justify=>'left'
-			)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-		$pre{$widget_name}=$row_counter[-1]->BrowseEntry(
-				-variable=>$reference,
-				-choices=> [@$array_ref],
-				-listwidth => $listwidth,
-				-width => $width,
-				# -bg => '#eeeeee',
-			)->pack(-side=>'left', -padx=>0, -ipadx=>0);
-		$widget_ref=\$pre{$widget_name};
-	} else {
-		
-		#---------------------#
-		# label:entry(:label) #
-		#---------------------#
-		
-		$prl{"$widget_name"}=$row_counter[-1]->Label(
-				-text=>"$label",
-				# -font => $font,
-				-justify=>'left'
-			)->pack(-side=>'left');
-		
-		$pre{"$widget_name"}=$row_counter[-1]->Entry(
-				-relief => 'groove',
-				-bg => '#eeeeee',
-				-width => ($_[4] ? $_[4] : ($_[1] ? length($_[1])+1 : 4)),
-				-textvariable=>\$_[1]
-			)->pack(-side=>'left');
-		if ($_[7]) {
-			$prl{"$widget_name-r"}=$row_counter[-1]->Label(
-					-text=>"$_[7]",
-					# -font => $font,
-					-justify=>'left'
+	# Switch on $widget_type ...
+	for ($widget_type) {
+		/^Entry/ && do {
+			my ($width, @widget_args) = @args;
+			$$widget_ref = $top_reference->$widget_type(
+					-textvariable=>$textvariable,
+					-width=>$width,
+					@widget_args,
 				)->pack(-side=>'left');
-		}
-		$widget_ref=\$pre{"$widget_name"};
+			last; };
+		
+		/^Label/ && do {
+			my (@widget_args) = @args;
+			my $text_option = ref($textvariable) ? "textvariable" : "text";
+			$$widget_ref = $top_reference->$widget_type(
+					-$text_option=>$textvariable,
+					@widget_args,
+				)->pack(-side=>'left');
+			last; };
+		
+		/^Checkbutton/ && do {
+			my ($variable, @widget_args) = @args;
+			$$widget_ref = $top_reference->$widget_type(
+					-text=>$textvariable,
+					-variable=>\$variable,
+					-onvalue=>1,
+					-offvalue=>0,
+					@widget_args,
+				)->pack(-side=>'left', -anchor=>'w', -pady=>0, -ipady=>0);
+			last; };
+			
+		/^BrowseEntry/ && do {
+			my ($array_ref, $listwidth, @widget_args) = @args;
+			$listwidth||=20;
+			$$widget_ref = $top_reference->$widget_type(
+					-variable=>$textvariable,
+					-choices=>[@$array_ref],
+					-listwidth=>$listwidth*7,
+					-width => $listwidth,
+					@widget_args,
+				)->pack(-side=>'left', -padx=>0, -ipadx=>0);
+			last; };
+			
+		/^Button/ && do {
+			my ($command, $default, $state, @widget_args) = @args;
+			$state ||= 'normal';
+			$default ||= 'normal';
+			
+			$$widget_ref = $top_reference->$widget_type(
+					-text=>$textvariable,
+					-command=>\$command,
+					-state=>$state,
+					-default=>$default,
+					@widget_args,
+				)->pack(-side=>'left', -anchor=>'w', -pady=>$button_pack_pady, -padx=>$button_pack_padx);
+			last; };
+			
+		/^LabFrame/ && do {
+			my ($frame_reference, @widget_args) = @args;
+			$$widget_ref=$$frame_reference->$widget_type(
+					# -background=>'grey50',
+					-label=>$textvariable,
+					-labelside=>'acrosstop',
+					@widget_args,
+				);
+			last; };
+					
+		/Text/ && do {
+			my ($width, $height, @widget_args) = @args;
+			$$widget_ref=$top_reference->Scrolled($widget_type,
+					-width=>$width,
+					-height=>$height,
+					@widget_args,
+				)->pack(-side=>'left', -expand=>1, -fill=>'both');
+			bind_mousewheel($$widget_ref);
+			last; };
+			
+		/^HList/ && do {
+			my ($width, $height, $columns, $browse_command, @widget_args) = @args;
+			$$widget_ref=$top_reference->Scrolled($widget_type,
+					-scrollbars=>'osoe',
+					-width=>$width,
+					-height=>$height,
+					-columns=>$columns,
+					-browsecmd=>\&$browse_command,
+					-command=>\&hlist_command,
+					@widget_args,
+				)->pack(-side=>'left', -expand=>1, -fill=>'both');
+			bind_mousewheel($$widget_ref);
+			last; };
+			
+		/^Canvas/ && do {
+			my ($buttons, $bindings, @widget_args) = @args;
+			canvas_buttons($top_reference, $widget_name) if $buttons;
+			$$widget_ref=$top_reference->$widget_type(
+					-height=>$dna_canvas_height,
+					@widget_args,
+				)->pack(-side=>'left', -expand=>1, -fill=>'x', -padx=>6, -pady=>2);
+			bind_canvas($widget_ref) if $bindings;
+			last; };
+			
+		/^Radio/ && do {
+			my (@widget_args) = @args;
+			$$widget_ref=$top_reference->$widget_type(
+					-text=>$textvariable,
+					@widget_args,
+				)->pack(-side=>'left', -anchor=>'w');
+			last; };
+		
+		# Warning - an undefined widget type ...
+		print "Undefined widget: @_\n";
 	}
-	$gui_count++;
 	
 	#--------------#
 	# Balloon help #
 	#--------------#
-		
+	
+	# This is a very easy way to attach balloons to widgets, while keeping all the help messages together
+	# (in the %balloonmsg hash above)
+	
 	if ($balloonmsg{$widget_name}) {
 		$Balloon->attach($$widget_ref, -balloonposition => 'mouse', -balloonmsg => $balloonmsg{$widget_name});
 	}
+}
+
+sub pack_grid {
+	my @widgets = map {/[\-\+\^]/ ? $_ : $packed_widgets{$_}} @_;
+	Tk::grid(@widgets, -sticky=>'nsew', -padx=>4);
 }
 
 sub pack_button {
@@ -2254,10 +2059,49 @@ sub pack_button {
 		)->pack(-side=>'left');
 }
 
-# sub read_ipc {
-	# <IPC>;
-	# print "this is perlprimer - I'm reading $_ from the temp file!\n";
-# }
+sub pack_osc_buttons {
+	#open/save/clear button stuff ...
+	my ($widget_name) = @_;
+	$packed_widgets{"$widget_name b"} = $row_counter[-1]->Frame()->pack(-side=>'left', -anchor=>'nw');
+	
+	$packed_widgets{"$widget_name open"}=pack_button($packed_widgets{"$widget_name b"}, $top->Pixmap(-data => $icon_dna_open), [\&open_seq, \$packed_widgets{$widget_name}])
+			->pack(-side=>'top', -anchor=>'w', -fill=>'x');
+	$Balloon->attach($packed_widgets{"$widget_name open"}, -balloonposition => 'mouse', -balloonmsg => "Open DNA sequence");
+	
+	$packed_widgets{"$widget_name save"}=pack_button($packed_widgets{"$widget_name b"}, $top->Pixmap(-data => $icon_dna_save), [\&save_seq, \$packed_widgets{$widget_name}])
+			->pack(-side=>'top', -anchor=>'w', -fill=>'x');
+	$Balloon->attach($packed_widgets{"$widget_name save"}, -balloonposition => 'mouse', -balloonmsg => "Save DNA sequence");
+	
+	$packed_widgets{"$widget_name clear"}=pack_button($packed_widgets{"$widget_name b"}, $top->Pixmap(-data => $icon_clear), [\&clear_text, \$packed_widgets{$widget_name}])
+			->pack(-side=>'top', -anchor=>'w', -fill=>'x');
+	$Balloon->attach($packed_widgets{"$widget_name clear"}, -balloonposition => 'mouse', -balloonmsg => "Clear sequence");
+}
+
+sub canvas_buttons {
+	my ($widget_ref, $widget_name) = @_;
+	
+	$packed_widgets{"$widget_name info"}=pack_button($widget_ref, $top->Pixmap(-data => $icon_info), \&canvas_info)
+			->pack(-side=>'right', -expand=>0, -anchor=>'e', -fill=>'none');
+		$Balloon->attach($packed_widgets{"$widget_name info"}, -balloonposition => 'mouse', -balloonmsg => "Graphical display help");
+	$packed_widgets{"$widget_name magnify"}=pack_button($widget_ref, $top->Pixmap(-data => $icon_magnify), [\&dna_magnify, 0])
+			->pack(-side=>'right', -expand=>0, -anchor=>'e', -fill=>'none');
+		$Balloon->attach($packed_widgets{"$widget_name magnify"}, -balloonposition => 'mouse', -balloonmsg => "Magnified view");
+	
+}
+
+
+sub bind_canvas {
+	# Bindings for DNA canvas
+	my ($widget_ref) = @_;
+	$$widget_ref->CanvasBind('<B1-Motion>' => sub {items_drag($Tk::event->x, $widget_ref)});
+	$$widget_ref->CanvasBind('<B2-Motion>' => sub {amplicon_drag($Tk::event->x, $widget_ref)});
+	$$widget_ref->CanvasBind('<1>' => sub {items_drag($Tk::event->x, $widget_ref)});
+	$$widget_ref->CanvasBind('<2>' => sub {amplicon_drag($Tk::event->x, $widget_ref)});
+	$$widget_ref->CanvasBind('<Control-B1-Motion>' => sub {amplicon_drag($Tk::event->x, $widget_ref)});
+	$$widget_ref->CanvasBind('<Control-1>' => sub {amplicon_drag($Tk::event->x, $widget_ref)});
+	$$widget_ref->CanvasBind('<3>' => sub {dna_magnify($Tk::event->x)});
+	$$widget_ref->CanvasBind('<Control-3>', \&draw_dna);
+}
 
 #---------------------#
 # MouseWheel bindings #
@@ -2267,19 +2111,20 @@ sub bind_mousewheel {
 	# Thanks to Slaven Rezic, Steve Liddie and "Mastering Perl/Tk" for this routine (slightly modified) ...
     	my ($w) = @_;
 		
-    	if ($^O eq 'MSWin32') {
+    	if ($os eq 'win') {
 		# Windows bindings
-        	$w->bind('<MouseWheel>' => [ sub { 
-				$_[0]->yview('scroll', -($_[1] / 120) * $scroll_factor, 'units') 
-			}, Ev('D') ]
-        	);
+		# Apparently mousewheel support is now built in .... ?!
+        	# $w->bind('<MouseWheel>' => [ sub { 
+				# $_[0]->yview('scroll', -($_[1] / 120) * $scroll_factor, 'units') 
+			# }, Ev('D') ]
+        	# );
     	} else {
 		# *nix bindings
         	$w->bind('<4>' => sub {
-            			$_[0]->yview('scroll', -$scroll_factor, 'units') unless $Tk::strictMotif;
+            			$_[0]->yview('scroll', -$scroll_factor, 'units');
         		});
         	$w->bind('<5>' => sub {
-                  		$_[0]->yview('scroll', $scroll_factor, 'units') unless $Tk::strictMotif;
+                  		$_[0]->yview('scroll', $scroll_factor, 'units');
         		});
     	}
 }
@@ -2681,18 +2526,36 @@ sub calc_amplicon {
                         
 			# all OK up to here, so let's check primer-dimers:
 			# NB: this is a big speed hit ...
-			my (@pd_score, @pd_sorted)=();
-
-             		push(@pd_score,primer_dimer($seq_f,$seq_f));
-             		push(@pd_score,primer_dimer($seq_f,$seq_r));
-             		push(@pd_score,primer_dimer($seq_r,$seq_r));
-             		@pd_sorted=sort{$a <=> $b} @pd_score;
+			# my (@pd_score, @pd_sorted)=();
+# 
+             		# push(@pd_score,primer_dimer($seq_f,$seq_f));
+             		# push(@pd_score,primer_dimer($seq_f,$seq_r));
+             		# push(@pd_score,primer_dimer($seq_r,$seq_r));
+             		# @pd_sorted=sort{$a <=> $b} @pd_score;
+			
+			# extensible
+			my $pd_score = primer_dimer($seq_f,$seq_f);
+			
+			my $new_score = primer_dimer($seq_f,$seq_r);
+			$pd_score = $new_score if $new_score < $pd_score;
+			
+			$new_score = primer_dimer($seq_r,$seq_r);
+			$pd_score = $new_score if $new_score < $pd_score;
+			
+			# non_extensible
+			my $pd_score_full = primer_dimer($seq_f,$seq_f,1);
+			
+			$new_score = primer_dimer($seq_f,$seq_r,1);
+			$pd_score_full = $new_score if $new_score < $pd_score_full;
+			
+			$new_score = primer_dimer($seq_r,$seq_r,1);
+			$pd_score_full = $new_score if $new_score < $pd_score_full;
 
 			$tm_f = sprintf("%.2f", $tm_f);
 			$tm_r = sprintf("%.2f", $tm_r);
 			
 			push @primer_pairs, [ $seq_f, $pos_f, $len_f, $tm_f,
-					$seq_r, $pos_r, $len_r, $tm_r, $realpos_r, $amp_size, $pd_sorted[0], ( $unconverted_f ?  $unconverted_f : 0), ( $unconverted_r ?  $unconverted_r : 0) ];
+					$seq_r, $pos_r, $len_r, $tm_r, $realpos_r, $amp_size, $pd_score, ( $unconverted_f ?  $unconverted_f : 0), ( $unconverted_r ?  $unconverted_r : 0), $pd_score_full ];
 			
 		}
 		$count++;
@@ -2721,7 +2584,7 @@ sub calc_seq_primers {
 	
 	my $last_seq;
 	
-	$pd_full = 1;
+	# $pd_full = 1;
 	# $pd_extensible = 0;
 		
 	foreach (@PF) {
@@ -2750,7 +2613,7 @@ sub calc_seq_primers {
 		}		
 		
 		# calculate primer-dimers
-		my $pd = primer_dimer($seq,$seq);
+		my $pd = primer_dimer($seq,$seq,1);
 		
 		# exclude all primer-dimers if asked ...
 		if ($exclude_pd_seq == 1) {
@@ -2762,7 +2625,7 @@ sub calc_seq_primers {
 		push @primer_pairs, [ $seq, $pos, $len, $tm_f, $pd ];
 		$last_seq = $pos;		
 	}
-	$pd_full = 0;
+	# $pd_full = 0;
 	
 	# $pd_extensible = 1;
 	sbarprint("\nFinished ... found ".($#primer_pairs+1)." primer pairs");
@@ -2916,7 +2779,18 @@ sub cc {
 
 sub clean_seq {
 	$_ = shift;
-	s/[\s|\n]//g; #remove spaces/new lines
+	my $nb_page = which_nb_page();
+	
+	s/\>(.*\n)//g; #remove FASTA formatting if it exists
+	if ($1 && $open_file{$nb_page} eq "File not saved") {
+		# if FASTA details are present ...
+		my $name = format_file_name($1);
+		
+		$open_file{$nb_page} = $name;
+		$top->configure(-title=>"PerlPrimer v$version - $name");
+	}
+	
+	s/[\s\n\r]//g; #remove spaces/new lines
 	s/-//g; #remove gaps in sequence
 	return $_;
 }
@@ -3046,12 +2920,8 @@ sub primer_dimer {
 	# been implemented as yet) and providing the possiblity of reading all
 	# primer-dimers (not just 3') by adjusting a single variable (which is used when
 	# displaying primer information.
-	
-	### TODO:
-	# It is easily possible to calculate *all* primers when searching for primer
-	# pairs ... I really should add a preferences option to do this ...
-	
-	my ($primer_f, $primer_r) = @_;
+		
+	my ($primer_f, $primer_r, $pd_full) = @_;
 	return unless ($primer_f) && ($primer_r);
 			
 	my ($k, $l);
@@ -3186,7 +3056,7 @@ sub primer_dimer_new {
 	# It is easily possible to calculate *all* primers when searching for primer
 	# pairs ... I really should add a preferences option to do this ...
 	
-	my ($primer_f, $primer_r) = @_;
+	my ($primer_f, $primer_r, $pd_full) = @_;
 	return unless ($primer_f) && ($primer_r);
 			
 	my ($k, $l);
@@ -3436,7 +3306,7 @@ sub get_tm {
 	# Lower case bug fix:
 	$fprimer = uc($fprimer);
 	$rprimer = uc($rprimer);
-	
+		
 	my ($deltaG, $deltaH, $deltaS);
 	my $oligo_conc_mols = $oligo_conc / 1000000000;
 
@@ -3468,72 +3338,82 @@ sub get_tm {
 	}
 	
 	my $repeat_real = $repeat-1;
-	$prf{dim}->delete(0.1,"end");
-	$prf{dim}->insert('end', "Warning: forward primer run found\n", 'red') if ($fprimer =~ /(C{$run,}|A{$run,}|G{$run,}|T{$run,})/);
-	$prf{dim}->insert('end', "Warning: forward primer repeat found : $1\n", 'red') if ($fprimer =~ /(.{2,})\1{$repeat_real,}/);
+	$packed_widgets{dim}->delete(0.1,"end");
+	$packed_widgets{dim}->insert('end', "Warning: forward primer run found\n", 'red') if ($fprimer =~ /(C{$run,}|A{$run,}|G{$run,}|T{$run,})/);
+	$packed_widgets{dim}->insert('end', "Warning: forward primer repeat found : $1\n", 'red') if ($fprimer =~ /(.{2,})\1{$repeat_real,}/);
 
-	$prf{dim}->insert('end', "Warning: reverse primer run found\n", 'red') if ($rprimer =~ /(C{$run,}|A{$run,}|G{$run,}|T{$run,})/);
-	$prf{dim}->insert('end', "Warning: reverse primer repeat found\n", 'red') if ($rprimer =~ /(.{2,})\1{$repeat_real,}/);
+	$packed_widgets{dim}->insert('end', "Warning: reverse primer run found\n", 'red') if ($rprimer =~ /(C{$run,}|A{$run,}|G{$run,}|T{$run,})/);
+	$packed_widgets{dim}->insert('end', "Warning: reverse primer repeat found\n", 'red') if ($rprimer =~ /(.{2,})\1{$repeat_real,}/);
 
-	$prf{dim}->insert('end', "Most stable 3' extensible primer-dimers (at $pd_temperature°C)\n\n", 'blue');
+	$packed_widgets{dim}->insert('end', "Most stable 3' extensible primer-dimers (at $pd_temperature°C), if any\n\n", 'blue');
 	
 	my ($pd1, $pd2, $pd3);
 	if ($fprimer && !check_degenerate($fprimer)) {
 		$pd1 = primer_dimer($fprimer,$fprimer);
 		$pos=$rating_hash{$score_sort[0]};
-		$prf{dim}->insert('end', "Forward vs. Forward: $score_sort[0] kcal/mol\n\n", 'black');
-		draw_dimer($fprimer, $fprimer, $pos, \ *DIMER) unless ($score_sort[0]==0);
 		
-		if ($rprimer && !check_degenerate($rprimer)) {
-			$pd2 = primer_dimer($fprimer,$rprimer);
-			$pos=$rating_hash{$score_sort[0]};
-			$prf{dim}->insert('end', "Forward vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
-			draw_dimer($fprimer, $rprimer, $pos, \ *DIMER) unless ($score_sort[0]==0);
-		}
-	}
-	
-	if ($rprimer && !check_degenerate($rprimer)) {		
-		$pd3 = primer_dimer($rprimer,$rprimer,1);
-		$pos=$rating_hash{$score_sort[0]};
-		$prf{dim}->insert('end', "Reverse vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
-		draw_dimer($rprimer, $rprimer, $pos, \ *DIMER) unless ($score_sort[0]==0);
-	}
-	
-	$pd_full = 1;
-	$prf{dim}->insert('end', "\nMore stable non-extensible primer-dimers (at $pd_temperature°C), if any\n\n", 'blue');
-	
-	if ($fprimer && !check_degenerate($fprimer)) {
-		primer_dimer($fprimer,$fprimer);
-		$pos=$rating_hash{$score_sort[0]};
-		if ($score_sort[0]<$pd1) {
-			$prf{dim}->insert('end', "Forward vs. Forward: $score_sort[0] kcal/mol\n\n", 'black');
+		unless ($score_sort[0]==0) {
+			$packed_widgets{dim}->insert('end', "Forward vs. Forward: $score_sort[0] kcal/mol\n\n", 'black');
 			draw_dimer($fprimer, $fprimer, $pos, \ *DIMER);
 		}
 		
 		if ($rprimer && !check_degenerate($rprimer)) {
-			primer_dimer($fprimer,$rprimer);
+			$pd2 = primer_dimer($fprimer,$rprimer);
+			$pos=$rating_hash{$score_sort[0]};
+			unless ($score_sort[0]==0) {
+				$packed_widgets{dim}->insert('end', "Forward vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
+				draw_dimer($fprimer, $rprimer, $pos, \ *DIMER);
+			}
+		}
+	}
+	
+	if ($rprimer && !check_degenerate($rprimer)) {		
+		$pd3 = primer_dimer($rprimer,$rprimer);
+		$pos=$rating_hash{$score_sort[0]};
+		
+		unless ($score_sort[0]==0) {
+			$packed_widgets{dim}->insert('end', "Reverse vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
+			draw_dimer($rprimer, $rprimer, $pos, \ *DIMER) unless ($score_sort[0]==0);
+		}
+	}
+	
+	# $pd_full = 1;
+	$packed_widgets{dim}->insert('end', "\nMore stable non-extensible primer-dimers (at $pd_temperature°C), if any\n\n", 'blue');
+	
+	if ($fprimer && !check_degenerate($fprimer)) {
+		primer_dimer($fprimer,$fprimer,1);
+		$pos=$rating_hash{$score_sort[0]};
+		
+		if ($score_sort[0]<$pd1) {
+			$packed_widgets{dim}->insert('end', "Forward vs. Forward: $score_sort[0] kcal/mol\n\n", 'black');
+			draw_dimer($fprimer, $fprimer, $pos, \ *DIMER);
+		}
+		
+		if ($rprimer && !check_degenerate($rprimer)) {
+			primer_dimer($fprimer,$rprimer,1);
 			$pos=$rating_hash{$score_sort[0]};
 			if ($score_sort[0]<$pd2) {
-				$prf{dim}->insert('end', "Forward vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
+				$packed_widgets{dim}->insert('end', "Forward vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
 				draw_dimer($fprimer, $rprimer, $pos, \ *DIMER);
 			}
 		}
 	}
 	if ($rprimer && !check_degenerate($rprimer)) {
-		primer_dimer($rprimer,$rprimer);
+		primer_dimer($rprimer,$rprimer,1);
 		$pos=$rating_hash{$score_sort[0]};
+		
 		if ($score_sort[0]<$pd3) {
-			$prf{dim}->insert('end', "Reverse vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
+			$packed_widgets{dim}->insert('end', "Reverse vs. Reverse: $score_sort[0] kcal/mol\n\n", 'black');
 			draw_dimer($rprimer, $rprimer, $pos, \ *DIMER);
 		}
 	}
 	
-	$pd_full = 0;
+	# $pd_full = 0;
 	
 	# again ... messy tie in for report generating routine ...
 	# Yes, I know this is a really, really, ugly way to do things!!
 	if ($report) {
-		my $dimer_text = $prf{dim}->get('0.1','end');
+		my $dimer_text = $packed_widgets{dim}->get('0.1','end');
 		my $primer_text = <<EOT;
 Forward primer: $fprimer
 
@@ -3554,12 +3434,16 @@ EOT
 		return $primer_text;
 	}
 	
-	$prf{dim}->see(0.1);
+	$packed_widgets{dim}->see(0.1);
 }
 
 
 sub blast_primers {
 	return if check_packages("HTTP::Request", "LWP::UserAgent");
+	
+	### Todo: find matching sequence names from f and r primer blast results
+	### - easily check possible amp problems
+	
 	# I've tried to make this the way blast *should* be, with colour output
 	# and the ability to limit the results ... 
 	if (($fprimer eq "") && ($rprimer eq "")) {
@@ -3591,30 +3475,30 @@ sub blast_primers {
 			$blast_results_3_ref = \@blast_results_r3;
 		}
 		
-		$prf{'blast_text'}->delete('0.1', 'end');
+		$packed_widgets{'blast_text'}->delete('0.1', 'end');
 		unless ($$blast_header_ref) {
 			return
 		}
-		$prf{'blast_text'}->insert('0.1', $$blast_header_ref, 'black');
+		$packed_widgets{'blast_text'}->insert('0.1', $$blast_header_ref, 'black');
 		
 		### TODO: hyperlinks??
-		
+				
 		# Users might get confused about "."'s in the string box ...
 		($search_string = $blast_search_string) ||=".";
 		for my $i (0 .. $#$blast_summary_ref) {
 			$_ = $$blast_summary_ref[$i];
 			next unless /$search_string/;
 			/^(\w*\|[\w\|\.\d]+)(.*?)(\d+\s+[\d\.\w\-]+\s*$)/;
-			$prf{'blast_text'}->insert('end', $1);
-			$prf{'blast_text'}->insert('end', $2, 'blue');
-			$prf{'blast_text'}->insert('end', $3."\n");
+			$packed_widgets{'blast_text'}->insert('end', $1);
+			$packed_widgets{'blast_text'}->insert('end', $2, 'blue');
+			$packed_widgets{'blast_text'}->insert('end', $3."\n");
 			
 		}
 		for my $i (0 .. $#$blast_results_1_ref) {
 			next unless $$blast_results_1_ref[$i] =~ /$search_string/;
-			$prf{'blast_text'}->insert('end', "\n\n".$$blast_results_1_ref[$i]."\n\n ", 'blue');
-			$prf{'blast_text'}->insert('end', $$blast_results_2_ref[$i]."\n\n", 'black');
-			$prf{'blast_text'}->insert('end', $$blast_results_3_ref[$i]."\n");
+			$packed_widgets{'blast_text'}->insert('end', "\n\n".$$blast_results_1_ref[$i]."\n\n ", 'blue');
+			$packed_widgets{'blast_text'}->insert('end', $$blast_results_2_ref[$i]."\n\n", 'black');
+			$packed_widgets{'blast_text'}->insert('end', $$blast_results_3_ref[$i]."\n");
 		}
 	};
 
@@ -3633,42 +3517,42 @@ sub blast_primers {
 	my $blast_d_fs = $blast_d->Frame()->pack(-side=>'right', -anchor=>'se');
 	$blast_d->Icon(-image => $pixmap);
 
-	nr(\$blast_d_f);
-	pack_gui('', '', 'blast_text', \$blast_d_f, 't', 95, 30, 1, 1);
+	nr(\$blast_d_f, $frame_pady, 1);
+	pack_gui('ROText', '', 'blast_text', 95, 30, -scrollbars=>'osoe');
 	
+	# buttons
 	nr(\$blast_d_fb);
-
-	pack_gui("OK", sub{
-			# $top->afterCancel($rptid);
-			$rptid->cancel;
+	pack_gui('Button', "OK", "blast_full", sub{
+			$rptid->cancel if $rptid;
 			$blast_d->destroy;
-		}, "blast_full", '', "b", "active", 0);
+		}, "active");
 		
-	pack_gui("Forward", sub {
+	pack_gui('Button', "Forward", "blast_f", sub {
 			$display='f';
 			&$blast_display;
-		}, "blast_f", '', "b", '', 1, '', '', 'disabled');
+		}, 'disabled');
 		
-	pack_gui("Reverse", sub {
+	pack_gui('Button', "Reverse", "blast_r", sub {
 			$display='r';
 			&$blast_display;
-		}, "blast_r", '', "b", '', 2, '', '', 'disabled');
-
+		}, 'disabled');
 	
-	pack_gui('Status: ', $blast_status, 'blast_status', '', 'lt', 3, $blast_status);
+	# Status line
+	pack_gui('Label', 'Status: ', 'blast_status_l');
+	pack_gui('Label', \$blast_status, 'blast_status');
 
 	# text search button
 	nr(\$blast_d_fs);
-	pack_gui('String:', $blast_search_string, 'blast_search_string', \$blast_d_fs, 20);
-	pack_gui('Search', sub {
+	pack_gui('Label', 'String:');
+	pack_gui('Entry', \$blast_search_string, 'blast_search_string', 20);
+	pack_gui('Button', 'Search', "blast_search", sub {
 			&$blast_display;
-		}, "blast_search", '', "b", '', 1, '', '', 'disabled');
-	# $top->update;
-	# $blast_d->deiconify();
-	$prf{blast_text}->configure(-fg=>'grey30');
-	$prf{blast_text}->tagConfigure('blue',
+		}, 'disabled');
+
+	$packed_widgets{blast_text}->configure(-fg=>'grey30');
+	$packed_widgets{blast_text}->tagConfigure('blue',
 		-foreground => 'midnightblue');
-	$prf{blast_text}->tagConfigure('black',
+	$packed_widgets{blast_text}->tagConfigure('black',
 		-foreground => 'black');
 	
 	$blast_status = "Sending BLAST request ...";
@@ -3692,8 +3576,8 @@ sub blast_primers {
 			$display='f';
 			&$blast_display;
 			
-			$prb{blast_f}->configure(-state=>'normal');
-			$prb{blast_search}->configure(-state=>'normal');
+			$packed_widgets{blast_f}->configure(-state=>'normal');
+			$packed_widgets{blast_search}->configure(-state=>'normal');
 		} else {
 			$blast_status="Unable to connect to server";
 		}
@@ -3710,8 +3594,8 @@ sub blast_primers {
 			@blast_results_r2 = @blast_results_2;
 			@blast_results_r3 = @blast_results_3;
 			
-			$prb{blast_r}->configure(-state=>'normal');
-			$prb{blast_search}->configure(-state=>'normal');
+			$packed_widgets{blast_r}->configure(-state=>'normal');
+			$packed_widgets{blast_search}->configure(-state=>'normal');
 			
 			$blast_status="Blast search complete";
 		} else {
@@ -3755,11 +3639,12 @@ sub get_primers {
 	sbarprint("\nCalculating amplicons ...");
 	calc_amplicon($dnaseq_r_len);
 
-	@primer_pairs_pr_s = @primer_pairs;	
+	@primer_pairs_pr_s = @primer_pairs;
+	sort_primers('13',1);
 	sort_primers('10');
 	
 	sbarprint("\nFinished ... found ".($#primer_pairs+1)." primer pairs");	
-	# draw_dna(\$prf{primer_canvas},\$prf{seq});
+	# draw_dna(\$packed_widgets{primer_canvas},\$packed_widgets{seq});
 	draw_dna();
 }
 
@@ -3803,7 +3688,7 @@ sub get_seq_primers {
 	sort_primers('1');
 	
 	sbarprint("\nFinished ... found ".($#primer_pairs+1)." primer pairs");	
-	# draw_dna(\$prf{primer_canvas},\$prf{seq});
+	# draw_dna(\$packed_widgets{primer_canvas},\$packed_widgets{seq});
 	draw_dna();
 }
 
@@ -3837,6 +3722,7 @@ sub get_qprimers {
 	calc_amplicon($dnaseq_r_len);
 	
 	@primer_pairs_q_s = @primer_pairs;
+	sort_primers('13',1);
 	sort_primers('10');
 		
 	sbarprint("\nFinished ... found ".($#primer_pairs+1)." primer pairs");	
@@ -3860,8 +3746,9 @@ sub find_re_sites {
 	$seq = substr($seq, $$max_range_5p, $$max_range_3p-$$max_range_5p);
 	
 	# find the rebase file (different versions are released constantly)
-	my @gcg_paths = glob("$HOME"."gcg.*");
-	if (@gcg_paths == 0) {
+	my @gcg_paths = glob("$HOME"."gcdg.*");
+	print @gcg_paths;
+	unless (@gcg_paths) {
 		# search for the file in the program directory
 		@gcg_paths = glob("$program_directory"."gcg.*");
 	}
@@ -3946,7 +3833,6 @@ sub find_re_sites {
 		$cloning_d = $top->Toplevel(-title=>'Cloning site configuration');
 		my $cloning_f = $cloning_d->Frame()->pack(-fill=>'both', -pady=>7);
 		my $cloning_fb = $cloning_d->Frame()->pack(-side=>'bottom', -fill=>'none');
-		$gui_count=0;
 		
 		my $re_enzymes = [sort @no_matches];
 		
@@ -3978,21 +3864,25 @@ sub find_re_sites {
 		}
 				
 		nr(\$cloning_f);		
-			pack_gui('Forward restriction enzyme site: ', \$forward_re_site, 'cloning_re_f', \$cloning_f, 'be', 0, $re_enzymes);
+			pack_gui('Label', 'Forward restriction enzyme site: ', 'cloning_re_f');
+			pack_gui('BrowseEntry', \$forward_re_site, 'cloning_re_f', $re_enzymes);
 		nr();
-			pack_gui('Reverse restriction enzyme site: ', \$reverse_re_site, 'cloning_re_r', \$cloning_f, 'be', 0, $re_enzymes);
-		nr();
-			pack_gui("5' anchor sequence", $cloning_anchor, "cloning_anchor", \$cloning_f, 15);
+			pack_gui('Label', 'Reverse restriction enzyme site: ', 'cloning_re_r');
+			pack_gui('BrowseEntry', \$reverse_re_site, 'cloning_re_r', $re_enzymes);
+		nr('', 5);
+			pack_gui('Label', "5' anchor sequence", "cloning_anchor");
+			pack_gui('Entry', \$cloning_anchor, "cloning_anchor", 15);
 		
-		pack_gui('OK', sub {
+		nr(\$cloning_fb);
+		pack_gui('Button', 'OK', 'cloning_ok', sub {
 				my ($enzyme) = ($forward_re_site =~ /([A-z0-9]*)/); 
 				$primer_seq_5f = lc("$cloning_anchor\_$enzymes{$enzyme}");
 				($enzyme) = ($reverse_re_site =~ /([A-z0-9]*)/);
 				$primer_seq_5r = lc("$cloning_anchor\_$enzymes{$enzyme}");
 				$cloning_d->destroy;
 				return;
-			}, 'cloning_ok', \$cloning_fb, "b", "active", 0);
-		pack_gui('Cancel', sub {$cloning_d->destroy;}, 'cloning_cancel', \$cloning_fb, "b", "normal", 1);
+			}, "active");
+		pack_gui('Button', 'Cancel', 'cloning_cancel', sub {$cloning_d->destroy;});
 		
 		$cloning_d->Icon(-image => $pixmap);
 	} else {
@@ -4027,8 +3917,8 @@ sub run_spidey {
 	
 	my $spidey_command = "$spidey_exec -i $tmp.dna_tmp -m $tmp.mrna_tmp -p $print_alignment";
 
-	my $mrna_seq = $prf{"qmrna_seq"}->get(0.1,"end");
-	my $dna_seq = $prf{"qdna_seq"}->get(0.1,"end");
+	my $mrna_seq = $packed_widgets{"qmrna_seq"}->get(0.1,"end");
+	my $dna_seq = $packed_widgets{"qdna_seq"}->get(0.1,"end");
 	
 	# Spidey will only accept input as files, so we need to move the two
 	# sequences to temporary files
@@ -4085,15 +3975,17 @@ sub run_spidey {
 	
 	sbarprint("\n");
 	
+	return ($_, $mrna_seq) unless $print_alignment;
+	
 	# isolate intron/exon boundaries
 	@intron_exon_bounds = ();
-	while (/(\d{1,})-(\d{1,}) \(mRNA\)/g) {
+	while (/(\d+)-(\d+) \(mRNA\)/g) {
 		push (@intron_exon_bounds, $2);
 	}
 	
 	# last boundary is end of mRNA sequence: remove
 	pop @intron_exon_bounds;
-
+	
 	return ($_, $mrna_seq);
 }
 
@@ -4123,7 +4015,7 @@ sub get_bisulphite {
 		$$max_ampsize = $$max_range_3p-$$max_range_5p
 	}
 
-	my $seq = $prf{"bisul_seq"}->get(0.1,"end");
+	my $seq = $packed_widgets{"bisul_seq"}->get(0.1,"end");
 	my ($dnaseq_f, $dnaseq_f_len, $dnaseq_r_top, $dnaseq_r, $dnaseq_r_len) = getseq($seq);
 	
 	# Check that there was actually a DNA sequence found!
@@ -4144,6 +4036,7 @@ sub get_bisulphite {
 	calc_amplicon($dnaseq_r_len);
 	
 	@primer_pairs_bs_s = @primer_pairs;
+	sort_primers('13',1);
 	sort_primers('10');
 		
 	$bs = 0;
@@ -4226,7 +4119,7 @@ sub copy_selected_primers {
 					$clip .= uc("$primer_seq_5f_real$insert_f\_$fprimer\t");
 				} elsif ($j == 4 && $primer_seq_5r) {
 					my $rprimer = $$slist[$sel][$j];
-					my ($primer_seq_5r_real, $insert_r) = (add_cloning($seq, '', '', $rprimer, $$slist[$sel][8]))[5,6];
+					my ($primer_seq_5r_real, $insert_r) = (add_cloning($seq, '', '', '', $rprimer, $$slist[$sel][8]))[5,6];
 					# print 
 					$clip .= uc("$primer_seq_5r_real$insert_r\_$rprimer\t");
 				} else {
@@ -4279,24 +4172,27 @@ sub menu_text {
 }
 
 sub sort_primers {
-	my ($ref, $slist) = get_variables(qw(hlist primers));
+	my ($sort_criteria, $quiet) = @_;
+	my ($list, $slist) = get_variables(qw(hlist primers));
 	my @old_slist = @$slist;
 	
-	$$ref->delete('all');
+	$$list->delete('all');
 	
 	# Re-sort forwards or backwards
 	# allow the ability to simply redisplay the list (when opening files)
-	if ($_[0]) {
-		$_[0] = $sort_prev if $_[0] eq "r";
+	if ($sort_criteria) {
+		$sort_criteria = $sort_prev if $sort_criteria eq "r";
 		
 		# We want dG to be sorted from highest to lowest by default:
 		# this is really inelegant!
 		my $sort_order = $sort_reverse;
-		$sort_order = 1-$sort_reverse if ($_[0] eq '10');
+		$sort_order = 1-$sort_reverse if ($sort_criteria eq '10' || $sort_criteria eq '13');
 		
-		@$slist = sort {@$a[$_[0]] <=> @$b[$_[0]]} @old_slist if $sort_order==0;
-		@$slist = sort {@$b[$_[0]] <=> @$a[$_[0]]} @old_slist if $sort_order==1;
+		@$slist = sort {@$a[$sort_criteria] <=> @$b[$sort_criteria]} @old_slist if $sort_order==0;
+		@$slist = sort {@$b[$sort_criteria] <=> @$a[$sort_criteria]} @old_slist if $sort_order==1;
 	}
+	
+	return if $quiet;
 	
 	my $num_elements = @{ @$slist[0] } if @$slist;
 	$num_elements ||=0;
@@ -4304,34 +4200,35 @@ sub sort_primers {
 	# Re-draw
 	if ($num_elements == 5) { # sequencing quick fix!!
 		for my $i ( 0 .. $#$slist ) {
-			$$ref->add($i);
-			$$ref->itemCreate($i, 0, -text=>"$$slist[$i][0]", -style=> $style_primer);
-			$$ref->itemCreate($i, 1, -text=>"$$slist[$i][1]");
-			$$ref->itemCreate($i, 2, -text=>"$$slist[$i][2]");
-			$$ref->itemCreate($i, 3, -text=>"$$slist[$i][3]", -style=> $style_tm);
+			$$list->add($i);
+			$$list->itemCreate($i, 0, -text=>"$$slist[$i][0]", -style=> $style_primer);
+			$$list->itemCreate($i, 1, -text=>"$$slist[$i][1]");
+			$$list->itemCreate($i, 2, -text=>"$$slist[$i][2]");
+			$$list->itemCreate($i, 3, -text=>"$$slist[$i][3]", -style=> $style_tm);
 			
-			$$ref->itemCreate($i, 4, -text=>"$$slist[$i][4]");
+			$$list->itemCreate($i, 4, -text=>"$$slist[$i][4]");
 		}
 	} else {
 		for my $i ( 0 .. $#$slist ) {
-			$$ref->add($i);
-			$$ref->itemCreate($i, 0, -text=>"$$slist[$i][0]", -style=> $style_primer);
-			$$ref->itemCreate($i, 1, -text=>"$$slist[$i][1]");
-			$$ref->itemCreate($i, 2, -text=>"$$slist[$i][2]");
-			$$ref->itemCreate($i, 3, -text=>"$$slist[$i][3]", -style=> $style_tm);
+			$$list->add($i);
+			$$list->itemCreate($i, 0, -text=>"$$slist[$i][0]", -style=> $style_primer);
+			$$list->itemCreate($i, 1, -text=>"$$slist[$i][1]");
+			$$list->itemCreate($i, 2, -text=>"$$slist[$i][2]");
+			$$list->itemCreate($i, 3, -text=>"$$slist[$i][3]", -style=> $style_tm);
 			
-			$$ref->itemCreate($i, 4, -text=>"$$slist[$i][4]", -style=> $style_primer);
-			$$ref->itemCreate($i, 5, -text=>"$$slist[$i][8]");
-			$$ref->itemCreate($i, 6, -text=>"$$slist[$i][6]");
-			$$ref->itemCreate($i, 7, -text=>"$$slist[$i][7]", -style=> $style_tm);
+			$$list->itemCreate($i, 4, -text=>"$$slist[$i][4]", -style=> $style_primer);
+			$$list->itemCreate($i, 5, -text=>"$$slist[$i][8]");
+			$$list->itemCreate($i, 6, -text=>"$$slist[$i][6]");
+			$$list->itemCreate($i, 7, -text=>"$$slist[$i][7]", -style=> $style_tm);
 			
-			$$ref->itemCreate($i, 8, -text=>"$$slist[$i][9]");
-			$$ref->itemCreate($i, 9, -text=>"$$slist[$i][10]");
+			$$list->itemCreate($i, 8, -text=>"$$slist[$i][9]");
+			$$list->itemCreate($i, 9, -text=>"$$slist[$i][10]");
+			$$list->itemCreate($i, 10, -text=>"$$slist[$i][13]") if defined($$slist[$i][13]);
 		}
 	}
 	
 	# save last value so that "reverse" can be applied if neccessary
-	$sort_prev = $_[0];
+	$sort_prev = $sort_criteria;
 }
 
 sub cancel {
@@ -4419,8 +4316,8 @@ sub new_file {
 	
 	if ($page eq "qpcr") {
 		# only for qpcr - quick and dodgy fix
-		$prf{qdna_seq}->delete(0.1,"end");
-		$prf{qmrna_seq}->delete(0.1,"end");
+		$packed_widgets{qdna_seq}->delete(0.1,"end");
+		$packed_widgets{qmrna_seq}->delete(0.1,"end");
 	}
 	
 	# Clear variables
@@ -4538,34 +4435,54 @@ sub blast {
 	}
 	
 	return unless (my $query=shift);
-	my $blast_put = "http://www.ncbi.nlm.nih.gov/blast/Blast.cgi?QUERY=$query&DATABASE=$blast_database&ENTREZ_QUERY=($blast_entrez_query)&EXPECT=$blast_expect&FORMAT_TYPE=Text&PROGRAM=blastn&SERVICE=plain&CMD=Put";		
-			
-	# send off the query
-	$_ = http_get($blast_put);
 	
-	# abort if unsuccessfull
-	return if $_ eq " ";
+	unless ($local_blast) {
+		# Standard NCBI server blast over http
+		my $blast_put = "http://www.ncbi.nlm.nih.gov/blast/Blast.cgi?QUERY=$query&DATABASE=$blast_database&ENTREZ_QUERY=($blast_entrez_query)&EXPECT=$blast_expect&FORMAT_TYPE=Text&PROGRAM=blastn&SERVICE=plain&CMD=Put";		
+				
+		# send off the query
+		$_ = http_get($blast_put);
 	
-	# find the RID string
-	/QBlastInfoBegin(.*)QBlastInfoEnd/sm;
-	$_ = $1;
-	/RID = ([\d\w\-.]*)/;
-
-	$rid_get = "http://www.ncbi.nlm.nih.gov/blast/Blast.cgi?RID=$1&FORMAT_TYPE=Text&CMD=Get";
+		# abort if unsuccessfull
+		return if $_ eq " ";
 	
-	# Hah! How about this for a simple way to unblock your GUI ... the only way I
-	# know of to use non-blocking, sleeping subroutines without forks - which we
-	# can't use with ActivePerl for Win32 :(	
-	$flag=undef;
-	$blast_count = 0;
-	$rptid = $top->repeat(15000, \&blast_wait);
-	$blast_d->waitVariable(\$flag);
-	# $blast_d->afterCancel($rptid);
-	$rptid->cancel;
+		# find the RID string
+		/QBlastInfoBegin(.*)QBlastInfoEnd/sm;
+		$_ = $1;
+		/RID = ([\d\w\-.]*)/;
 	
-	# Having asked for text output, blast still provides some HTML formatting!
-	s/\<!\-\-.*\-\-\>//sg;
-	s/\<[\w\\]*\>//g;
+		$rid_get = "http://www.ncbi.nlm.nih.gov/blast/Blast.cgi?RID=$1&FORMAT_TYPE=Text&CMD=Get";
+		
+		# Hah! How about this for a simple way to unblock your GUI ... the only way I
+		# know of to use non-blocking, sleeping subroutines without forks - which we
+		# can't use with ActivePerl for Win32 :(	
+		$flag=undef;
+		$blast_count = 0;
+		$rptid = $top->repeat(15000, \&blast_wait);
+		$blast_d->waitVariable(\$flag);
+		# $blast_d->afterCancel($rptid);
+		$rptid->cancel;
+		
+		# Having asked for text output, blast still provides some HTML formatting!
+		s/\<!\-\-.*\-\-\>//sg;
+		s/\<[\w\\]*\>//g;
+	} else {
+		# local BLAST server
+		# need to save the primer sequence to a temp file for input to local BLAST
+		unless (open (PRIMER, ">$tmp.primer_tmp")) {
+			dialogue("Error: could not write BLAST temp file: $!\n");
+			return;
+		}
+		print PRIMER $query;
+		close (PRIMER);
+		
+		my $local_blast_command = $local_blast_directory."blastall -p blastn -d $local_blast_database -i $tmp.primer_tmp";
+		# print "executing $local_blast_command\n";
+		$_ = `$local_blast_command`;
+		
+		# delete tmp file
+		unlink "$tmp.primer_tmp";
+	}
 			
 	# OK, let's try something really nifty ... let's pull each entry out:
 	my $blast_out = $_;
@@ -4573,7 +4490,9 @@ sub blast {
 	undef(@blast_results_2);
 	undef(@blast_results_3);
 	
-	/(BLASTN.*?Value.*?)(\w+.*?)ALIGNMENTS/s;
+	# s/\r//g;
+	
+	/(BLASTN.*?Value.*?)(\w+.*?)\>/s;
 	my ($blast_header, $blast_summary) = ($1,$2);
 	
 	# search for each sequence identifier and find corresponding blast entry
@@ -4634,17 +4553,20 @@ sub get_ensembl {
 		$ensembl = $top->Toplevel(-title=>'Retrieve gene from Ensembl');
 		my $ensembl_f = $ensembl->Frame()->pack(-fill=>'both', -pady=>7);
 		my $ensembl_fb = $ensembl->Frame()->pack(-side=>'bottom', -fill=>'none');
-		$gui_count=0;
 		
 		nr(\$ensembl_f);		
-			pack_gui('Gene name ', $ensembl_gene, "ensembl_gene", \$ensembl_f, 15);
+			pack_gui('Label', 'Gene name ', "ensembl_gene");
+			pack_gui('Entry', \$ensembl_gene, "ensembl_gene", 15);
 		nr();
-			pack_gui('Organism', \$ensembl_organism, 'ensembl_organsim', \$ensembl_f, 'be', 0, \@ensembl_species, 20);
+			pack_gui('Label', 'Organism', 'ensembl_organsim');
+			pack_gui('BrowseEntry', \$ensembl_organism, 'ensembl_organsim', \@ensembl_species, 20);
 		nr();
-			pack_gui('Retrieve', \$ensembl_type, 'ensembl_type', \$ensembl_f, 'be', 0, \@ensembl_types, 10);
+			pack_gui('Label', 'Retrieve', 'ensembl_type');
+			pack_gui('BrowseEntry', \$ensembl_type, 'ensembl_type', \@ensembl_types, 10);
 		
-		pack_gui('OK', \&fetch_ensembl, 'ensembl_ok', \$ensembl_fb, "b", "active", 0);
-		pack_gui('Cancel', sub {$ensembl->destroy;}, 'ensembl_cancel', \$ensembl_fb, "b", "normal", 1);
+		nr(\$ensembl_fb);		
+		pack_gui('Button', 'OK', 'ensembl_ok', \&fetch_ensembl, "active");
+		pack_gui('Button', 'Cancel', 'ensembl_cancel', sub {$ensembl->destroy;});
 		
 		$ensembl->Icon(-image => $pixmap);
 	} else {
@@ -4689,19 +4611,20 @@ sub fetch_ensembl {
 		my $ensembl_mm_f = $ensembl_mm->Frame()->pack(-fill=>'both', -pady=>7);
 		my $ensembl_mm_fb = $ensembl_mm->Frame()->pack(-side=>'bottom', -fill=>'none');
 		nr(\$ensembl_mm_f);		
-			pack_gui('Please select gene of interest','',"ensemble_mm_d_note",'', 'lt');
+			pack_gui('Label', 'Please select gene of interest:', "ensemble_mm_d_note");
 		nr();
-			pack_gui('', \$name, 'ensembl_mm_d_genes', '', 'be', 0, \@gene_names, 40);
+			pack_gui('BrowseEntry', \$name, 'ensembl_mm_d_genes', \@gene_names, 40);
 		
 		my $cancel=1;
-		pack_gui('OK', sub {
+		nr(\$ensembl_mm_fb);
+		pack_gui('Button', 'OK', 'ensembl_ok', sub {
 				$cancel=undef;
 				$ensembl_mm->destroy;
 				$gene_id = $ids{$name};
-			}, 'ensembl_ok', \$ensembl_mm_fb, "b", "active", 0);
-		pack_gui('Cancel', sub {
+			}, "active");
+		pack_gui('Button', 'Cancel', 'ensembl_cancel', sub {
 				$ensembl_mm->destroy;
-			}, 'ensembl_cancel', \$ensembl_mm_fb, "b", "normal", 1);
+			});
 		
 		$ensembl_mm->Icon(-image => $pixmap);
 		
@@ -4730,12 +4653,12 @@ sub fetch_ensembl {
 	if ($page eq 'qpcr') {
 		# retrieve both gene and transcript sequences - retrieval type is ignored
 		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=genomic&out=text&btnsubmit=Export&embl_format=embl");
-		$prf{qdna_seq}->delete(0.1,"end");
-		$prf{qdna_seq}->insert(0.1,$_);
+		$packed_widgets{qdna_seq}->delete(0.1,"end");
+		$packed_widgets{qdna_seq}->insert(0.1,$_);
 				
 		$_ = http_get("http://www.ensembl.org/$ensembl_organism/exportview?tab=fasta&embl_format=fasta&type=feature&ftype=gene&id=$gene_id&fasta_option=cdna&out=text&btnsubmit=Export&embl_format=embl");
-		$prf{qmrna_seq}->delete(0.1,"end");
-		$prf{qmrna_seq}->insert(0.1,$_);
+		$packed_widgets{qmrna_seq}->delete(0.1,"end");
+		$packed_widgets{qmrna_seq}->insert(0.1,$_);
 		
 		# Run spidey automatically to show the user the intron/exon boundaries
 		run_spidey(1);
@@ -4747,14 +4670,10 @@ sub fetch_ensembl {
 		$$seq_ref->delete(0.1,"end");
 		$$seq_ref->insert(0.1,$_);
 	}
-	
-	# # truncate name of gene
-	# (my $name_trunc = $name) =~ s/\(.*\)//g;
-	# $name_trunc =~ s/\s+/_/g;
-	# $name_trunc =~ s/_+$//g;
-
+		
 	# update title
 	my $file_name = "$ensembl_gene"."_($ensembl_organism)";
+	$file_name = format_file_name($file_name);
 	$top->configure(-title=>"PerlPrimer v$version - $file_name");
 	$open_file{$page} = $file_name;
 	sbarprint("\n$ensembl_gene ($ensembl_organism) retrieved sucessfully");
@@ -4823,32 +4742,17 @@ sub sbarprint {
 #------------#
 
 sub header_create {
-	my ($ref, $widget_name) = @_;	
-	unless ($widget_name eq 'seq_res') {
-		$$ref->header('create', 0, -text => 'Forward Primer');
-		$$ref->header('create', 1, -text => 'Pos');
-		$$ref->header('create', 2, -text => 'Len');
-		$$ref->header('create', 3, -text => 'Tm');
-		$$ref->header('create', 4, -text => 'Reverse Primer');
-		$$ref->header('create', 5, -text => 'Pos');
-		$$ref->header('create', 6, -text => 'Len');
-		$$ref->header('create', 7, -text => 'Tm');
-		$$ref->header('create', 8, -text => 'Amp');
-		$$ref->header('create', 9, -text => 'Primer-Dimer dG');
-	} else {
-		$$ref->header('create', 0, -text => 'Forward Primer');
-		$$ref->header('create', 1, -text => 'Pos');
-		$$ref->header('create', 2, -text => 'Len');
-		$$ref->header('create', 3, -text => 'Tm');
-		$$ref->header('create', 4, -text => 'Primer-dimer dG');
+	my ($widget_r, @headers) = @_;
+	my $i=0;
+	foreach (@headers) {
+		$$widget_r->header('create', $i, -text => $_);
+		$i++;
 	}
-	
-	$style_primer = $$ref->ItemStyle("text",
-		# -font => $hlist_font,
+		
+	$style_primer = $$widget_r->ItemStyle("text",
 		-background => '#eeeeee',
 		-foreground => 'red');
-	$style_tm = $$ref->ItemStyle("text",
-		# -font => $hlist_font,
+	$style_tm = $$widget_r->ItemStyle("text",
 		-background => '#eeeeee',
 		-foreground => 'blue');
 }
@@ -4904,7 +4808,6 @@ sub browse_bisulphite {
 		browse_primer($hlist_sel);
 	# }
 }
-
 
 sub browse_primer {
 	my ($hlist, $slist, $canv) = get_variables(qw(hlist primers canvas));
@@ -4975,7 +4878,7 @@ sub jump_to_tm {
 	get_tm();
 	
 	$nb->raise('primer');
-	$prf{dim}->focus;
+	$packed_widgets{dim}->focus;
 }
 
 
@@ -5232,13 +5135,15 @@ sub canvas_info {
 	
 	$canvas_info_d = $top->Toplevel(-title=>'PerlPrimer Help');
 	my $canvas_info_d_f = $canvas_info_d->Frame()->pack(-expand=>1, -fill=>'both');
-	my $canvas_info_d_fb = $canvas_info_d->Frame()->pack(-side=>'bottom', -fill=>'x');
-	pack_gui('', '', 'canvas_info_text', \$canvas_info_d_f, 't', 80, 35, 1, 3);
-	pack_gui("OK", sub {$canvas_info_d->destroy}, "canvas_info_OK", \$canvas_info_d_fb, "b", "active", 0);
-	$prf{canvas_info_text}->configure(-font=>"$gui_font");
-	$prf{canvas_info_text}->tagConfigure('bold',
+	my $canvas_info_d_fb = $canvas_info_d->Frame()->pack(-side=>'bottom', -fill=>'none');
+	nr(\$canvas_info_d_f, $frame_pady, 1);
+	pack_gui('ROText', '', 'canvas_info_text', 80, 35, -scrollbars=>'oe', -wrap=>'word');
+	nr(\$canvas_info_d_fb);
+	pack_gui('Button', "OK", "canvas_info_OK", sub {$canvas_info_d->destroy}, "active");
+	$packed_widgets{canvas_info_text}->configure(-font=>"$gui_font");
+	$packed_widgets{canvas_info_text}->tagConfigure('bold',
 		-font => "$gui_font bold");
-	$prf{canvas_info_text}->tagConfigure('center',
+	$packed_widgets{canvas_info_text}->tagConfigure('center',
 		-justify => 'center');
 	
 	my $info_text_dna=<<EOT;
@@ -5259,17 +5164,17 @@ EOT
 \nRight-clicking on the DNA will open a detailed view aligning the primers, DNA, translated ORF [Standard PCR and Real-time PCR tabs] or CpG island boundaries [Bisulphite PCR tab].  Intron/exon boundaries [Real-time PCR tab] or CpG residues [Bisulphite PCR tab] are also highlighted.  The "Copy printable" button in this dialogue window will copy the entire layout to the clipboard wrapped at 80 characters, which can then be pasted into a word processor/text editor and printed.
 EOT
 	
-	$prf{canvas_info_text}->insert('1.0', " ", 'center');
-	$prf{canvas_info_text}->imageCreate('end', -image=>$top->Pixmap(-data => $dna_canvas_pixmap));
+	$packed_widgets{canvas_info_text}->insert('1.0', " ", 'center');
+	$packed_widgets{canvas_info_text}->imageCreate('end', -image=>$top->Pixmap(-data => $dna_canvas_pixmap));
 	
-	$prf{canvas_info_text}->insert('end', "\n\n\nDNA sequence\n", 'bold');
-	$prf{canvas_info_text}->insert('end', $info_text_dna);
-	$prf{canvas_info_text}->insert('end', "\n\nAmplified ranges\n", 'bold');
-	$prf{canvas_info_text}->insert('end', $info_text_ranges);
-	$prf{canvas_info_text}->insert('end', "\n\nPrimers\n", 'bold');
-	$prf{canvas_info_text}->insert('end', $info_text_primers);
-	$prf{canvas_info_text}->insert('end', "\n\nOther features\n", 'bold');
-	$prf{canvas_info_text}->insert('end', $info_text_other);
+	$packed_widgets{canvas_info_text}->insert('end', "\n\n\nDNA sequence\n", 'bold');
+	$packed_widgets{canvas_info_text}->insert('end', $info_text_dna);
+	$packed_widgets{canvas_info_text}->insert('end', "\n\nAmplified ranges\n", 'bold');
+	$packed_widgets{canvas_info_text}->insert('end', $info_text_ranges);
+	$packed_widgets{canvas_info_text}->insert('end', "\n\nPrimers\n", 'bold');
+	$packed_widgets{canvas_info_text}->insert('end', $info_text_primers);
+	$packed_widgets{canvas_info_text}->insert('end', "\n\nOther features\n", 'bold');
+	$packed_widgets{canvas_info_text}->insert('end', $info_text_other);
 }
 
 
@@ -5284,10 +5189,12 @@ sub acknowledgements {
 	$ack_d = $top->Toplevel(-title=>'Acknowledgements');
 	my $ack_d_f = $ack_d->Frame()->pack(-expand=>1, -fill=>'both');
 	my $ack_d_fb = $ack_d->Frame()->pack(-side=>'bottom', -fill=>'none');
-	pack_gui('', '', 'ack_text', \$ack_d_f, 't', 70, 35, 1, 3);
-	pack_gui("OK", sub {$ack_d->destroy}, "ack_OK", \$ack_d_fb, "b", "active", 0);
-	$prf{ack_text}->configure(-font=>"$gui_font");
-	$prf{ack_text}->tagConfigure('bold',
+	nr(\$ack_d_f, $frame_pady, 1);
+	pack_gui('ROText', '', 'ack_text', 70, 35, -scrollbars=>'oe', -wrap=>'word');
+	nr(\$ack_d_fb);
+	pack_gui('Button', "OK", "ack_OK", sub {$ack_d->destroy}, "active");
+	$packed_widgets{ack_text}->configure(-font=>"$gui_font");
+	$packed_widgets{ack_text}->tagConfigure('bold',
 		-font =>"$gui_font bold");
 	my $text_thermo=<<EOT;
 Thermodynamic parameters are based on the following papers:
@@ -5327,17 +5234,17 @@ Nick Wong
 Karl Billeter
 EOT
 	
-	$prf{ack_text}->insert('0.1', "Thermodynamic parameters\n\n", 'bold');
-	$prf{ack_text}->insert('end', $text_thermo);
+	$packed_widgets{ack_text}->insert('0.1', "Thermodynamic parameters\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('end', $text_thermo);
 	
-	$prf{ack_text}->insert('end', "\n\nEntropy corrections\n\n", 'bold');
-	$prf{ack_text}->insert('end', $text_entropy);
+	$packed_widgets{ack_text}->insert('end', "\n\nEntropy corrections\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('end', $text_entropy);
 	
-	$prf{ack_text}->insert('end', "\n\nBisulphate PCR primer design\n\n", 'bold');
-	$prf{ack_text}->insert('end', $text_cpg);
+	$packed_widgets{ack_text}->insert('end', "\n\nBisulphate PCR primer design\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('end', $text_cpg);
 	
-	$prf{ack_text}->insert('end', "\n\nSpecial thanks for comments, testing and suggestions\n(in no particular order)\n\n", 'bold');
-	$prf{ack_text}->insert('end', $text_thanks);
+	$packed_widgets{ack_text}->insert('end', "\n\nSpecial thanks for comments, testing and suggestions\n(in no particular order)\n\n", 'bold');
+	$packed_widgets{ack_text}->insert('end', $text_thanks);
 	
 	# icon	
 	$ack_d->Icon(-image => $pixmap);
@@ -5352,15 +5259,18 @@ sub view_spidey_out {
 	my $spidey_d_fb = $spidey_d->Frame()->pack(-side=>'bottom', -fill=>'x');
 	$spidey_d->Icon(-image => $pixmap);
 	
-	pack_gui('', '', 'spidey_text', \$spidey_d_f, 't', 100, 25, 1, 0);
-	pack_gui("OK", sub {$spidey_d->destroy}, "spidey_OK", \$spidey_d_fb, "b", "active", 0);
-	pack_gui("Full output", sub {
-			($spidey_out) = run_spidey(0);
-			$prf{'spidey_text'}->delete('0.1', 'end');
-			$prf{'spidey_text'}->insert('0.1', $spidey_out)
-		}, "spidey_full", \$spidey_d_fb, "b", "normal", 1);
+	nr(\$spidey_d_f, $frame_pady, 1);
+	pack_gui('ROText', '', 'spidey_text', 100, 25, -scrollbars=>'osoe');
 	
-	$prf{spidey_text}->insert('0.1', $spidey_out);
+	nr(\$spidey_d_fb);
+	pack_gui('Button', "OK", "spidey_OK", sub {$spidey_d->destroy}, "active");
+	pack_gui('Button', "Full output", "spidey_full", sub {
+			($spidey_out) = run_spidey(0);
+			$packed_widgets{'spidey_text'}->delete('0.1', 'end');
+			$packed_widgets{'spidey_text'}->insert('0.1', $spidey_out)
+		});
+	
+	$packed_widgets{spidey_text}->insert('0.1', $spidey_out);
 }	
 
 #-------------#
@@ -5395,15 +5305,17 @@ sub prefs {
 	
 	my $prefs_page_general = $prefs_nb->add('files', -label=>'General', -anchor=>'nw');
 	my $prefs_page_repeats = $prefs_nb->add('repeats', -label=>'Exclusions', -anchor=>'nw');
-	my $prefs_page_bioinformatics = $prefs_nb->add('blast', -label=>'Bioinformatics', -anchor=>'nw');
+	my $prefs_page_blast = $prefs_nb->add('blast', -label=>'BLAST', -anchor=>'nw');
 	my $prefs_page_cloning = $prefs_nb->add('cloning', -label=>'Cloning', -anchor=>'nw');
+	my $prefs_page_orfcpg = $prefs_nb->add('orfcpg', -label=>'CpG Islands', -anchor=>'nw');
 	my $prefs_page_dimers = $prefs_nb->add('dimers', -label=>'Dimers', -anchor=>'nw');
 	my $prefs_page_connection = $prefs_nb->add('connection', -label=>'Connection', -anchor=>'nw');
 	my $prefs_page_gui = $prefs_nb->add('gui', -label=>'GUI', -anchor=>'nw');
 	
 	my $prefs_page_general_f = $prefs_page_general->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
 	my $prefs_page_repeats_f = $prefs_page_repeats->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
-	my $prefs_page_bioinformatics_f = $prefs_page_bioinformatics->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
+	my $prefs_page_blast_f = $prefs_page_blast->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
+	my $prefs_page_orfcpg_f = $prefs_page_orfcpg->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
 	my $prefs_page_cloning_f = $prefs_page_cloning->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
 	my $prefs_page_dimers_f = $prefs_page_dimers->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
 	my $prefs_page_connection_f = $prefs_page_connection->Frame()->pack(-anchor=>'nw', -expand=>0, -fill=>'none');
@@ -5411,240 +5323,261 @@ sub prefs {
 	
 	my $prefs_fb = $prefs->Frame()->pack(-side=>'bottom', -padx=>2, -fill=>'none');
 	
-	# code for directory browser - ActiveState has not updated their Perl/Tk distribution
-	# for some time, thus it lacks the chooseDirectory command.
+	# new Tk choose directory code:
 	my $browse_directory = sub {
 		my ($dir_ref, $title) = @_;
-		# if (check_packages_no_warn("Win32::FileOp")) {
-			# # currently disabled
-			# my $dir = BrowseForFolder("Please select $title directory");
-			# $$dir_ref = $dir.$dir_sep if $dir;
-		# } else {
-			my $w = $top->Toplevel(-title=>"Select $title directory");
-			my $w_b = $w->Frame()->pack(-side=>'bottom', -padx=>2, -fill=>'none');
-			
-			my $dir;
-			my $dir_list;
-			
-			# more code to cover up for windows bugs
-			my $initial_dir = $$dir_ref;
-			$initial_dir =~ s/(\w:\\).*/$1/;
-					
-			$dir_list = $w->Scrolled('DirTree',
-					-width=>45,
-					-height=>35,
-					-scrollbars=>'osoe',
-					-selectmode=>'browse',
-					-command=> sub {$dir_list->opencmd(shift)},
-					-browsecmd=> sub {$dir = shift},
-					-directory=>$initial_dir,
-					)->pack(-fill=>'both', -expand=>1);
-			nr(\$w_b);
-			pack_gui('OK', sub {$w->destroy; $dir =~ s/\//\\/g if $os eq 'win'; $$dir_ref=$dir.$dir_sep}, 'bd_ok', '', 'b');
-			pack_gui('Cancel', sub {$w->destroy}, 'bd_cancel', '', 'b');
-			$w->Icon(-image => $pixmap);
-			bind_mousewheel($dir_list);
-			# $dir_list->chdir($$dir_ref);
-		# }
+		my $dir = $prefs->chooseDirectory();
+		return unless defined($dir);
+		
+		if ($os eq 'win') {
+			# directory separator correction if running through cygwin
+			$dir =~ s/\//\\/g;
+		}
+		
+		
+		$dir = $dir.$dir_sep unless ($dir =~ /$dir_sep$/);
+		$$dir_ref = $dir;		
+	};
+	
+	my $browse_file = sub {
+		my ($file_ref, $title) = @_;
+		my $file = $top->getOpenFile(-initialfile=>$$file_ref);
+		return unless defined($file);
+		
+		if ($os eq 'win') {
+			# directory separator correction if running through cygwin
+			$file =~ s/\//\\/g;
+		}
+		$$file_ref = $file;
 	};
 	
 	nr(\$prefs_page_general_f, 2);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Directories", "", "prefs_directories_l", \$prf{prefs_gen}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Directories", "prefs_directories_l", -font=>$gui_font_bold);
 		nr();
-			pack_gui("Home directory", $HOME, "prefs_files_home", \$prf{prefs_gen}, 20);
-			# pack_gui("Choose ...", sub {my $dir = $top->chooseDirectory; return unless $dir; $HOME=$dir.$dir_sep}, "prefs_files_home_b", '', 'b');
-			# my $open_home = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), sub {my $dir = $top->chooseDirectory(-initialdir=>$HOME); return unless $dir; $HOME=$dir.$dir_sep})->pack();
-			my $open_home = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$HOME, "home")])->pack();
+			pack_gui('Label', "Home directory", "prefs_files_home");
+			pack_gui('Label', \$HOME, "prefs_files_home");
+			# my $open_home = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$HOME, "home")])->pack(-side=>'left');
 
 		nr('',0);
-			pack_gui("Temp directory", $tmp, "prefs_files_tmp", '', 20);
-			my $open_tmp = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$tmp, "tmp")])->pack();
+			pack_gui('Label', "Temp directory", "prefs_files_tmp");
+			pack_gui('Entry', \$tmp, "prefs_files_tmp", 20);
+			my $open_tmp = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$tmp, "tmp")])->pack(-side=>'left');
 		nr('',0);
-			pack_gui("Path to Spidey executable", $spidey_path, "prefs_files_spidey", \$prf{prefs_gen}, 20);
-			my $open_spidey = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$spidey_path, "Spidey")])->pack();
+			pack_gui('Label', "Path to Spidey executable", "prefs_files_spidey");
+			pack_gui('Entry', \$spidey_path, "prefs_files_spidey", 20);
+			my $open_spidey = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$spidey_path, "Spidey")])->pack(-side=>'left');
 		nr('', 7);
 		
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Opening files", "", "prefs_files_l", \$prf{prefs_gen}, 'lt');
-			$font = $gui_font;	
+			pack_gui('Label', "Opening files", "prefs_files_l", -font=>$gui_font_bold);
 		nr('',0);
-			pack_gui('Prompt to save existing project before opening new data', $file_data_overwrite, "prefs_files_overwrite", '', 'c', 0, 1);
+			pack_gui('Checkbutton', 'Prompt to save existing project before opening new data', "prefs_files_overwrite", \$file_data_overwrite);
 		nr('', 7);
 		
 		nr();	
-			$font = $gui_font_bold;
-			pack_gui("PCR component concentrations", "", "prefs_oligo", \$prf{prefs_gen}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "PCR component concentrations", "prefs_oligo", -font=>$gui_font_bold);
 		nr();
-			pack_gui("Mg++: ", $mg_conc, "prefs_oligo_runs", \$prf{prefs_gen}, 5, "", "", "mM");
+			pack_gui('Label', "Mg++: ");
+			pack_gui('Entry', \$mg_conc, "prefs_mg_conc", 5);
+			pack_gui('Label', "mM");
+			
 		nr();
-			pack_gui("Oligos: ", $oligo_conc, "prefs_oligo_repeats", \$prf{prefs_gen}, 5, '', "", "nM");
+			pack_gui('Label', "Oligos: ");
+			pack_gui('Entry', \$oligo_conc, "prefs_oligo_conc", 5);
+			pack_gui('Label', "mM");
 		nr();
-			pack_gui("dNTPs: ", $dntp_conc, "prefs_oligo_runs", \$prf{prefs_gen}, 5, "", "", "mM");
+			pack_gui('Label', "dNTPs: ");
+			pack_gui('Entry', \$dntp_conc, "prefs_oligo_conc", 5);
+			pack_gui('Label', "mM");
 		nr();
-			pack_gui("Monovalent cations: ", $monovalent_cation_conc, "prefs_oligo_runs", \$prf{prefs_gen}, 5, '', "", "mM");
+			pack_gui('Label', "Monovalent cations: ");
+			pack_gui('Entry', \$monovalent_cation_conc, "prefs_monocat_conc", 5,);
+			pack_gui('Label', "mM");
+			
+		nr('', 7);
+		
+		nr();	
+			pack_gui('Label', "ORF / CpG island finding behaviour", '', -font=>$gui_font_bold);
+		nr('',0);
+			pack_gui('Checkbutton', 'Defer to capitalised regions', "prefs_defer", \$defer_to_caps);		
+		nr('',2);
+
+			
 			
 	nr(\$prefs_page_repeats_f, 2);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("PCR excluded repeats / runs", "", "prefs_rrgen", \$prf{prefs_rr}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "PCR excluded repeats / runs", '', -font=>$gui_font_bold);
 		nr('',0);
-			pack_gui('Exclude primers containing more than', $exclude_rr, "prefs_exclude_rr", '', 'c', 0, 1);
+			pack_gui('Checkbutton', 'Exclude primers containing more than', "prefs_exclude_rr", \$exclude_rr);
 		nr();
-			pack_gui('', $repeat, "prefs_rr_repeats", \$prf{prefs_rr}, 3, '','', 'Repeats or');
-		# nr();
-			pack_gui('', $run, "prefs_rr_runs", \$prf{prefs_rr}, 3, '', '', 'Runs');
+			pack_gui('Entry', \$repeat, "prefs_rr_repeats", 3);
+			pack_gui('Label', 'Repeats or');
+			pack_gui('Entry', \$run, "prefs_rr_runs", 3);
+			pack_gui('Label', 'Runs');
 	
 		nr('', 7);
 	
 		nr();	
-			$font = $gui_font_bold;
-			pack_gui("Bisulphite PCR excluded repeats / runs", "", "prefs_rrbs_l", \$prf{prefs_rr}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Bisulphite PCR excluded repeats / runs", '', -font=>$gui_font_bold);
 		nr('',0);
-			pack_gui('Exclude primers containing more than', $exclude_rr_bs, "prefs_exclude_rr_bs", '', 'c', 0, 1);
+			pack_gui('Checkbutton', 'Exclude primers containing more than', "prefs_exclude_rr_bs", \$exclude_rr_bs);
 		nr();
-			pack_gui('', $repeat_bs, "prefs_rrbs_repeats", \$prf{prefs_rr}, 3, '', '', 'Repeats or');
-		# nr();		
-			pack_gui('', $run_bs, "prefs_rrbs_runs", \$prf{prefs_rr}, 3, '', '', 'Runs');
+			pack_gui('Entry', \$repeat, "prefs_rrbs_repeats", 3);
+			pack_gui('Label', 'Repeats or');
+			pack_gui('Entry', \$run, "prefs_rrbs_repeats", 3);
+			pack_gui('Label', 'Runs');
 		nr('', 7);
 		
 		nr();
-			$font = $gui_font_bold;
-			pack_gui('Exclude %GC content', "", "prefs_gc", \$prf{prefs_rr}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', 'Exclude %GC content', '', -font=>$gui_font_bold);
 		nr();
-			pack_gui("Only consider primers with ", $min_gc, "prefs_gc_max", \$prf{prefs_rr}, 3);
-			pack_gui('-', $max_gc, "prefs_gc_min", \$prf{prefs_rr}, 3, '', '', '% GC content');
+			pack_gui('Label', "Only consider primers with ", "prefs_gc_max");
+			pack_gui('Entry', \$min_gc, "prefs_gc_min", 3);
+			pack_gui('Label', '-');
+			pack_gui('Entry', \$max_gc, "prefs_gc_max", 3);
+			pack_gui('Label', '% GC content');
 		nr();
-			pack_gui('(Used when "Exclude %GC" is checked on a project page)','',"prefs_gc_note",\$prf{prefs_rr}, 'lt');
+			pack_gui('Label', '(Used when "Exclude %GC" is checked on a project page)');
 		
 		nr('',2);
 			
-	nr(\$prefs_page_bioinformatics_f, 2);
+	nr(\$prefs_page_blast_f, 2);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("BLAST search parameters", "", "prefs_bioinf_l", \$prf{prefs_bioinf}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "BLAST search parameters", '', -font=>$gui_font_bold);
 		nr();
-			pack_gui('Expect value: ', $blast_expect, "prefs_blast_expect", \$prf{prefs_bioinf}, 4);
-		nr();	
-			pack_gui('Database: ', \$blast_database, 'prefs_blast_database', \$prf{prefs_bioinf}, 'be', 0, \@blast_database_array, 10);
-		nr();	
-			pack_gui('Limit to organism (Entrez query): ', \$blast_entrez_query, 'prefs_blast_entrez', \$prf{prefs_bioinf}, 'be', 0, \@blast_entrez_array, 20);
-		
-		nr('',7);
-				
-		nr();		
-			$font = $gui_font_bold;
-			pack_gui("CpG island prediction", "", "prefs_bioinf_l2", \$prf{prefs_bioinf}, 'lt');
-			$font = $gui_font;
-		nr();	
-			pack_gui("Window size: ", $cpg_window, "prefs_bioinf_window", \$prf{prefs_bioinf}, 5,'','','bases');
-		nr();	
-			pack_gui("Minimum island size: ", $min_cpg_island, "prefs_bioinf_island", \$prf{prefs_bioinf}, 5, '','','bases');
-		nr();	
-			pack_gui("Minimum obs/exp: ", $cpg_oe, "prefs_bioinf_oe", \$prf{prefs_bioinf}, 5);
-		nr();	
-			pack_gui("Minimum GC content: ", $cpg_gc, "prefs_bioinf_gc", \$prf{prefs_bioinf}, 5, '','', '%');		
-		nr('',0);
-			pack_gui('Emulate cpgplot', $cpgplot_method, "prefs_cpgplot_method", '', 'c', 0, 1);
+			pack_gui('Label', 'Expect value: ', "prefs_blast_expect");
+			pack_gui('Entry', \$blast_expect, "prefs_blast_expect", 4);
+		nr();
+			pack_gui('Radiobutton', "Use remote BLAST server", 'remote_blast_r', -variable=>\$local_blast, -value=>0);
+			pack_gui('Radiobutton', "Use local BLAST server", 'remote_blast_r', -variable=>\$local_blast, -value=>1);
 		nr('', 7);
 		
+		nr();
+			pack_gui('Label', "Remote BLAST (NCBI server)", '', -font=>$gui_font_bold);
 		nr();	
-			$font = $gui_font_bold;
-			pack_gui("ORF / CpG island finding behaviour", "", "prefs_oligo", \$prf{prefs_gen}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', 'Database: ', 'prefs_blast_database');
+			pack_gui('BrowseEntry', \$blast_database, 'prefs_blast_database', \@blast_database_array, 10);
+		nr();	
+			pack_gui('Label', 'Limit to organism (Entrez query): ', 'prefs_blast_entrez');
+			pack_gui('BrowseEntry', \$blast_entrez_query, 'prefs_blast_entrez', \@blast_entrez_array, 20);
+		nr('',7);
+		nr();
+			pack_gui('Label', "Local BLAST", '', -font=>$gui_font_bold);
+		nr();
+			pack_gui('Label', 'BLAST server location', "prefs_blast_expect");
+			pack_gui('Entry', \$local_blast_directory, "prefs_blast_expect", 30);
+			my $open_blast_srv = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_directory, (\$local_blast_directory, "BLAST directory")])->pack(-side=>'left');
 		nr('',0);
-			pack_gui('Defer to capitalised regions', $defer_to_caps, "prefs_defer", \$prf{prefs_gen}, 'c', 0, 1);		
-		nr('',2);
+			pack_gui('Label', 'Database: ', "prefs_blast_expect");
+			pack_gui('Entry', \$local_blast_database, "prefs_blast_expect", 30);
+			my $open_blast_database = pack_button($row_counter[-1], $top->Pixmap(-data => $icon_open_small), [$browse_file, (\$local_blast_database, "BLAST database")])->pack(-side=>'left');
+		nr('',0);
+		
+	nr(\$prefs_page_orfcpg_f, 2);			
+		nr();		
+			pack_gui('Label', "CpG island prediction", '', -font=>$gui_font_bold);
+		nr();	
+			pack_gui('Label', "Window size: ", "prefs_bioinf_window");
+			pack_gui('Entry', \$cpg_window, "prefs_bioinf_window", 5);
+			pack_gui('Label', 'bases');
+		nr();	
+			pack_gui('Label', "Minimum island size: ", "prefs_bioinf_island");
+			pack_gui('Entry', \$min_cpg_island, "prefs_bioinf_island", 5);
+			pack_gui('Label', 'bases');
+		nr();	
+			pack_gui('Label', "Minimum obs/exp: ", "prefs_bioinf_oe");
+			pack_gui('Entry', \$cpg_oe, "prefs_bioinf_oe", 5);
+		nr();	
+			pack_gui('Label', "Minimum GC content: ", "prefs_bioinf_gc");
+			pack_gui('Entry', \$cpg_gc, "prefs_bioinf_gc", 5);
+			pack_gui('Label', '%');		
+		nr('',0);
+			pack_gui('Checkbutton', 'Emulate cpgplot', "prefs_cpgplot_method", \$cpgplot_method);
+		nr('', 7);
+		
 
 					
 		
 	nr(\$prefs_page_cloning_f, 2);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Restriction enzyme cloning sequences", "", "prefs_bioinf_re_l", \$prf{prefs_bioinf}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Restriction enzyme cloning sequences", '', -font=>$gui_font_bold);
 		nr('',0);
-			pack_gui('Use 6-base cutting enzymes only', $simple_sites, "prefs_simple_sites", \$prf{prefs_bioinf}, 'c', 0, 1);
+			pack_gui('Checkbutton', 'Use 6-base cutting enzymes only', "prefs_simple_sites", \$simple_sites);
 		nr('',0);
-			pack_gui('Only list enzymes that do not cut sequence', $exclude_found_sites, "prefs_exclude_found_sites", \$prf{prefs_bioinf}, 'c', 0, 1);
-		
+			pack_gui('Checkbutton', 'Only list enzymes that do not cut sequence', "prefs_exclude_found_sites", \$exclude_found_sites);
 		nr('',7);
 	
 	nr(\$prefs_page_dimers_f, 2);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Primer-dimer parameters", "", "prefs_dimer_l",'', 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Primer-dimer parameters", '', -font=>$gui_font_bold);
 		nr();
-			pack_gui('Calculate primer-dimer dG at ', $pd_temperature, 'prefs_dimer_temp', '', 3, '', '', '°C');
+			pack_gui('Label', 'Calculate primer-dimer dG at ', 'prefs_dimer_temp');
+			pack_gui('Entry', \$pd_temperature, 'prefs_dimer_temp', 3);
+			pack_gui('Label', '°C');
 		
 	nr(\$prefs_page_connection_f, 2);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Proxy server", "", "prefs_connection_font", \$prf{prefs_connection}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Proxy server", '', -font=>$gui_font_bold);
 		nr('',0);	
-			pack_gui('Use http proxy server', $use_proxy, "prefs_connection_proxy", \$prf{prefs_connection}, 'c', 0, 1);
+			pack_gui('Checkbutton', 'Use http proxy server', "prefs_connection_proxy", \$use_proxy);
 		nr();	
-			pack_gui('Address: ', $http_proxy, 'prefs_connection_address', \$prf{prefs_connection}, 30);
-			pack_gui('Port', $http_port, 'prefs_connection_port', \$prf{prefs_connection}, 5, 2);
+			pack_gui('Label', 'Address: ', 'prefs_connection_address');
+			pack_gui('Entry', \$http_proxy, 'prefs_connection_address', 30);
+			pack_gui('Label', 'Port', 'prefs_connection_port');
+			pack_gui('Entry', \$http_port, 'prefs_connection_port', 5);
 		nr('',7);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Interaction with external applications", "", "prefs_contigviewer_l", '', 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Interaction with external applications", '', -font=>$gui_font_bold);
 		nr();
-			pack_gui('Listen to port ', $tcp_port, "prefs_contigviewer_port", '', 6);
+			pack_gui('Label', 'Listen to port ',"prefs_contigviewer_port");
+			pack_gui('Entry', \$tcp_port, "prefs_contigviewer_port", 6);
 		nr('',0);
-			pack_gui('Automatically find primers upon receiving data', $ipc_autofind, "prefs_contigviewer_autofind", '', 'c', 0, 1);
+			pack_gui('Checkbutton', 'Automatically find primers upon receiving data', "prefs_contigviewer_autofind", \$ipc_autofind);
 	
 			
 	nr(\$prefs_page_gui_f, 3);
 		nr();
-			$font = $gui_font_bold;
-			pack_gui("Fonts", "", "prefs_gui_font", \$prf{prefs_gui}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Fonts", '', -font=>$gui_font_bold);
 		nr();	
-			my $font_families = [sort $top->fontFamilies];
-			pack_gui('Main font:', \$gui_font_face, 'prefs_gui_family', \$prf{prefs_gui}, 'be', 0, $font_families);
-			pack_gui(' Size:', \$gui_font_size, 'prefs_gui_size', \$prf{prefs_gui}, 'be', 1, [(3 .. 32)], 3);
+			my @font_families = sort $top->fontFamilies;
+			pack_gui('Label', 'Main font:', 'prefs_gui_family');
+			pack_gui('BrowseEntry', \$gui_font_face, 'prefs_gui_family', \@font_families);
+			pack_gui('Label', ' Size:', 'prefs_gui_size');
+			pack_gui('BrowseEntry', \$gui_font_size, 'prefs_gui_size', [(3 .. 32)], 3);
 		nr();
-			pack_gui('List font:', \$list_font_face, 'prefs_gui_list_family', \$prf{prefs_gui}, 'be', 0, $font_families);
-			pack_gui(' Size:', \$list_font_size, 'prefs_gui_list_size', \$prf{prefs_gui}, 'be', 1, [(3 .. 32)], 3);
+			pack_gui('Label', 'List font:', 'prefs_gui_list_family');
+			pack_gui('BrowseEntry', \$list_font_face, 'prefs_gui_list_family', \@font_families);
+			pack_gui('Label', ' Size:', 'prefs_gui_list_size');
+			pack_gui('BrowseEntry', \$list_font_size, 'prefs_gui_list_size', [(3 .. 32)], 3);
 		nr();
-			pack_gui('Fixed font:', \$text_font_face, 'prefs_gui_text_family', \$prf{prefs_gui}, 'be', 0, $font_families);
-			pack_gui(' Size:', \$text_font_size, 'prefs_gui_text_size', \$prf{prefs_gui}, 'be', 1, [(3 .. 32)], 3);
+			pack_gui('Label', 'Fixed font:', 'prefs_gui_text_family');
+			pack_gui('BrowseEntry', \$text_font_face, 'prefs_gui_text_family', \@font_families);
+			pack_gui('Label', ' Size:', 'prefs_gui_text_size');
+			pack_gui('BrowseEntry', \$text_font_size, 'prefs_gui_text_size', [(3 .. 32)], 3);
 		nr();
 		
-			pack_gui('Use OS font defaults', $font_override, 'prefs_gui_override', \$prf{prefs_gui}, 'c', 0, 1);
+			pack_gui('Checkbutton', 'Use OS font defaults', 'prefs_gui_override', \$font_override);
 		nr('',7);
 		
 		nr();	
-			$font = $gui_font_bold;
-			pack_gui("Previously opened files", "", "prefs_gui_mru", \$prf{prefs_gui}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Previously opened files", '', -font=>$gui_font_bold);
 		nr();
-			pack_gui('List the last ', $mru_number, "prefs_gui_mru_number", \$prf{prefs_gui}, 3, '','', 'files');
+			pack_gui('Label', 'List the last ', "prefs_gui_mru_number");
+			pack_gui('Entry', \$mru_number, "prefs_gui_mru_number", 3);
+			pack_gui('Label', 'files', "prefs_gui_mru_number");
 		nr('',7);
 		
 		nr();	
-			$font = $gui_font_bold;
-			pack_gui("Mouse Wheel", "", "prefs_gui_mouse", \$prf{prefs_gui}, 'lt');
-			$font = $gui_font;
+			pack_gui('Label', "Mouse Wheel", '', -font=>$gui_font_bold);
 		nr();
-			pack_gui('Mouse wheel scrolls ', $scroll_factor, "prefs_gui_wheel", \$prf{prefs_gui}, 3, '','', 'lines');
+			pack_gui('Label', 'Mouse wheel scrolls ', "prefs_gui_wheel");
+			pack_gui('Entry', \$scroll_factor, "prefs_gui_wheel", 3);
+			pack_gui('Label', 'lines');
 		nr('',2);
 		
-					
-	pack_gui("OK", sub {
+	nr(\$prefs_fb);				
+	pack_gui('Button', 'OK', 'prefs_ok', sub {
 			# if the salt concentration has been changed, we need to recalculate %oligo_dG
 			recalculate_dG();
 			
@@ -5670,9 +5603,9 @@ sub prefs {
 			
 			read_prefs();
 			$prefs->destroy;
-		}, "prefs_OK", \$prefs_fb, "b", "active", 0);
+		}, 'active');
 	
-	pack_gui("Revert", sub {
+	pack_gui('Button', 'Revert', 'prefs_cancel', sub {
 			# This is perhaps a bit inefficient, re-reading the pref_file each time
 			# the dialogue is cancelled.  However, it does not seem to cause a
 			# noticable time-lag and it's certainly the simplest way to do things
@@ -5682,7 +5615,7 @@ sub prefs {
 			# it's definitely possible, but a bit of a fuss!!
 			read_prefs();
 			$prefs->destroy;
-		}, "prefs_cancel", \$prefs_fb, "b", "normal", 1);
+		});
 
 	$prefs->Icon(-image => $pixmap);
 }
@@ -5721,8 +5654,8 @@ sub find_gene {
 	$_ = shift;
 	return if length($_) == 0;
 	my ($subroutine) = get_variables(qw(find_sub));
-
-	s/\>.*\n//g; #remove FASTA formatting if it exists
+	
+	# s/\>.*\n//g; #remove FASTA formatting if it exists
 	$_ = clean_seq($_);
 
 	my @array = ();
@@ -5937,7 +5870,7 @@ sub find_cpg {
 		}
 	}
 	
-	$prf{"bisul_seq"}->delete(0.1,"end");
+	$packed_widgets{"bisul_seq"}->delete(0.1,"end");
 	my $cpg_pos = 0;
 
 	for my $i (0 .. $#cpg_island) {
@@ -5952,12 +5885,12 @@ sub find_cpg {
 		# print "pos = $cpg_pos\n";
 	 	
 		# Re-enter DNA sequence using capitalised ORF, lowercase 5' and 3' regions
-		$prf{"bisul_seq"}->insert("1.end",$dna1.$dna2);
+		$packed_widgets{"bisul_seq"}->insert("1.end",$dna1.$dna2);
 	}
 	
 	# Last part of the reconstructed sequence:
 	my $dna3 = substr($seq, $cpg_pos);
-	$prf{"bisul_seq"}->insert("1.end",$dna3);
+	$packed_widgets{"bisul_seq"}->insert("1.end",$dna3);
 	
 	return (-1) unless @cpg_island;
 	return @cpg_island;
@@ -6031,6 +5964,77 @@ sub draw_dna {
 	$defer_to_caps = $old_defer; # restore state
 }
 
+
+sub view_intron_exon_structure {
+	# Draws a typical genomic DNA diagram showing exons and introns
+	if (Exists($view_ie)) {
+		$view_ie->destroy;
+	}
+	
+	# Create dialogue
+	$view_ie = $top->Toplevel(-title=>'Intron/Exon Genomic Structure');
+	my $view_ie_f = $view_ie->Frame()->pack(-expand=>1, -fill=>'both');
+	my $view_ie_fb = $view_ie->Frame()->pack(-side=>'bottom', -fill=>'none');
+	
+	nr(\$view_ie_f);
+	pack_gui('Canvas', '', 'view_ie_canvas', 0, 0, -width=>600, -height=>$dna_canvas_height+15);
+	
+	nr(\$view_ie_fb);
+	pack_gui('Button', 'OK', 'view_ie_ok', sub {$view_ie->destroy}, 'active');
+	
+	$view_ie->Icon(-image => $pixmap);
+	
+	my $canvas = \$packed_widgets{view_ie_canvas};	
+	
+	# get spidey output
+	($_) = run_spidey(1);
+	
+	# isolate genomic structure
+	my @exon_structure;
+	while (m/Exon \d+[\(\-\)]*: (\d+)-(\d+) \(gen\)/g) {
+		push @exon_structure, [$1, $2];
+	}
+	
+	# Get strand orientation - will need to reverse array if minus strand
+	my ($strand) = m/Strand: (\w+)/;
+	@exon_structure = reverse(@exon_structure) if $strand eq "minus";
+	
+	# length of genomic sequence
+	my $gen_length = $exon_structure[-1][1];
+		
+	# get dimensions of canvas
+	my $width = $$canvas->width;
+	my $height= $$canvas->height;
+	my $dna_canvas_size=($width-($dna_canvas_offset*2))/$gen_length;
+	
+	my $intron_y1 = $dc_dna_y1+2;
+	my $intron_y2 = $dc_dna_y2-2;
+	
+	my $text_y = $dna_canvas_height+5;
+	
+	my $previous_canvas_j;
+	my $count;
+	foreach my $a (@exon_structure) {
+		$count++;
+		my ($i, $j) = @$a;
+		my ($canvas_i, $canvas_j) = ($i * $dna_canvas_size + $dna_canvas_offset, $j * $dna_canvas_size + $dna_canvas_offset);
+		if ($previous_canvas_j) {
+			# draw intron
+			$$canvas->createRectangle($previous_canvas_j, $intron_y1, $canvas_i, $intron_y2, -fill=>'grey');
+		}
+		
+		# draw exon
+		$$canvas->createRectangle($canvas_i, $dc_dna_y1, $canvas_j, $dc_dna_y2, -fill=>'midnightblue');
+		
+		my $canvas_text = ($canvas_i + $canvas_j)/2;
+		# label exon
+		$$canvas->createText($canvas_text, $text_y, -text=>$count);
+		
+		$previous_canvas_j = $canvas_j;
+	}
+}
+		
+		
 sub items_drag {
 	my ($min_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p) 
 		= get_variables(qw(min_ampsize max_range_5p min_range max_range max_range_3p)); 
@@ -6103,14 +6107,15 @@ sub select_exon {
 }
 
 sub amplicon_drag {
+	my ($x,$widget_ref) = @_;
+	
 	my ($min_ampsize, $max_ampsize, $max_range_5p, $min_range, $max_range, $max_range_3p) 
 		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p)); 
 
 	my $canv = which_nb_page();
 	
-	my ($x,$ref) = @_;
 	
-	my $width = $$ref->width;
+	my $width = $$widget_ref->width;
 	my $dna_max = $width-$dna_canvas_offset;
 	my $dna_min = $dna_canvas_offset;
 	
@@ -6120,7 +6125,7 @@ sub amplicon_drag {
 	my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
 
 
-	$x = sprintf("%.0f", $$ref->canvasx($x));
+	$x = sprintf("%.0f", $$widget_ref->canvasx($x));
 	$x = $dna_min if $x < $dna_min;
 	$x = $dna_max if $x > $dna_max;
 	
@@ -6161,13 +6166,13 @@ sub amplicon_drag {
 	if ($x-$min_amp_canvas{$canv}<$max_amp_canvas{$canv}-$x)  {
 		# Changing amp_size at 5' end
 		$x = $dna_min2 if $x > $dna_min2;
-		$$ref->coords('amp_range', $x, $dc_sel_y1-$dc_sel_offset2, $max_amp_canvas{$canv},$dc_sel_y2+$dc_sel_offset2);
+		$$widget_ref->coords('amp_range', $x, $dc_sel_y1-$dc_sel_offset2, $max_amp_canvas{$canv},$dc_sel_y2+$dc_sel_offset2);
 		$min_amp_canvas{$canv}=$x;
 		$$max_range_5p = sprintf("%.0f", ($x-$dna_canvas_offset) / $dna_canvas_size);
 	} else {
 		# Changing amp_size at 3' end
 		$x = $dna_max2 if $x < $dna_max2;
-		$$ref->coords('amp_range', $min_amp_canvas{$canv}, $dc_sel_y1-$dc_sel_offset2, $x, $dc_sel_y2+$dc_sel_offset2);
+		$$widget_ref->coords('amp_range', $min_amp_canvas{$canv}, $dc_sel_y1-$dc_sel_offset2, $x, $dc_sel_y2+$dc_sel_offset2);
 		$max_amp_canvas{$canv}=$x;
 		$$max_range_3p = sprintf("%.0f", ($x-$dna_canvas_offset) / $dna_canvas_size);
 		$$max_range_3p = $seq_len if $$max_range_3p>$seq_len;
@@ -6377,7 +6382,7 @@ sub dna_magnify {
 	# straight to the forward primer ...
 	# my $base_pos = sprintf("%.0f",($x-$dna_canvas_offset)/$dna_canvas_size);
 	
-	my $text_ref = \$prf{view_base_text};
+	my $text_ref = \$packed_widgets{view_base_text};
 	
 	# Local subroutines:	
 	my $copy_report = sub {
@@ -6435,13 +6440,17 @@ sub dna_magnify {
 	my $view_basefbr = $view_base->Frame()->pack(-side=>'right');
 	
 	$view_base->withdraw if $report;
-		
-	pack_gui('', '', 'view_base_text', \$view_basef, 't', 80, 4, 1, 2);
-		
-	pack_gui('OK', sub {$view_base->destroy}, 'view_base_ok', \$view_basefb, 'b', 'active', 0);
-	pack_gui('Copy printable', \&$copy_printable, 'view_base_copy', \$view_basefb, 'b', '', 1);
-	pack_gui('Forward', \&$view_fprimer, 'view_base_pf', \$view_basefbr, 'b', '', 0, '', '', 'disabled' );
-	pack_gui('Reverse', \&$view_rprimer, 'view_base_pr', \$view_basefbr, 'b', '', 1, '', '', 'disabled' );
+	
+	nr(\$view_basef);
+	pack_gui('ROText', '', 'view_base_text', 80, 4, -scrollbars=>'os', -wrap=>'none');
+	
+	nr(\$view_basefb);	
+	pack_gui('Button', 'OK', 'view_base_ok', sub {$view_base->destroy}, 'active');
+	pack_gui('Button', 'Copy printable', 'view_base_copy', \&$copy_printable);
+	
+	nr(\$view_basefbr);
+	pack_gui('Button', 'Forward', 'view_base_pf', \&$view_fprimer, 'disabled' );
+	pack_gui('Button', 'Reverse', 'view_base_pr', \&$view_rprimer, 'disabled' );
 	
 	$$text_ref->tagConfigure('red',
 		-foreground => 'red');
@@ -6496,7 +6505,8 @@ sub dna_magnify {
 		
 		# Added sequences?
 		if ($page eq 'pd' && (($primer_seq_5f) || ($primer_seq_5r))) {
-			($primer_seq_5f_real, $insert_f, $fprimer, $fprimerpos, $fprimerposl, $primer_seq_5r_real, $insert_r, $rprimer, $rprimerpos, $rprimerposl) = add_cloning($seq, $fprimer, $fprimerpos, $fprimerposl, $rprimer, $rprimerpos, $rprimerposl);
+			($primer_seq_5f_real, $insert_f, $fprimer, $fprimerpos, $fprimerposl, $primer_seq_5r_real, $insert_r, $rprimer, $rprimerpos, $rprimerposl) 
+			= add_cloning($seq, $fprimer, $fprimerpos, $fprimerposl, $rprimer, $rprimerpos, $rprimerposl);
 		}
 		
 		my $spacerfp = " "x($fprimerpos-3);
@@ -6513,8 +6523,8 @@ sub dna_magnify {
 		}
 		
 		# Make buttons active or inactive:
-		$prb{view_base_pf}->configure(-state=>($fprimer ? 'active' : 'disabled'));
-		$prb{view_base_pr}->configure(-state=>($rprimer ? 'active' : 'disabled'));
+		$packed_widgets{view_base_pf}->configure(-state=>($fprimer ? 'active' : 'disabled'));
+		$packed_widgets{view_base_pr}->configure(-state=>($rprimer ? 'active' : 'disabled'));
 	}
 	
 	# Numbering along the top (starts at 0)
@@ -6534,6 +6544,15 @@ sub dna_magnify {
 	for my $i (0 .. $#gene_array) {
 		my $peptide="";
 		my ($start, $end)=($gene_array[$i][0],$gene_array[$i][1]);
+		
+		# if f_primer starts before ORF, translate from there up
+		if ($fprimerpos && $fprimerpos < $start) {
+			my $start_mod = $start%3;
+			my $fprimer_mod = $fprimerpos%3;
+			my $new_start = $fprimerpos + ($start_mod-$fprimer_mod);
+			$start = $new_start;
+		}
+		
 		$$text_ref->tagAdd('black', "3.$start", "3.$end");
 		if ($page eq 'bis') {
 			$peptide = "-"x($end-$start);
@@ -6685,8 +6704,8 @@ sub open_file_type {
 			# # file is unknown format
 			# dialogue("File does not appear to be a PerlPrimer file or in FASTA format.\nIf you are trying to open a DNA sequence file, please use the open icon next to the sequence entry field");
 			# last;
-		} else {
-			return ($page, $name) = open_fasta($file, $widget_ref, @file_data);
+		# } else {
+			# return ($page, $name) = open_fasta($file, @file_data);
 		}
 	}
 }
@@ -6770,8 +6789,8 @@ sub open_ppr {
 	$$seq_ref->insert(0.1,$save_seq);
 	if ($save_seq2) {
 		# only for qpcr
-		$prf{qdna_seq}->delete(0.1,"end");
-		$prf{qdna_seq}->insert(0.1,$save_seq2);
+		$packed_widgets{qdna_seq}->delete(0.1,"end");
+		$packed_widgets{qdna_seq}->insert(0.1,$save_seq2);
 	}
 	
 	# restore results
@@ -6812,8 +6831,7 @@ sub open_fasta {
 			($name, $range_5a, $range_5b, $range_3a, $range_3b, $page) = /^\>\s*(.+?)\s*(?:5prime_region\[(\d+)-(\d+)\])?\s*(?:3prime_region\[(\d+)-(\d+)\])?\s*(?:page\[(\d+)\])?\s*$/;
 			
 			# process name (remove whitespace, other illegal filename chars)
-			$name =~ s/\s+/_/g; # whitespace
-			$name =~ s/[,]//g; # other characters - in progress
+			$name = format_file_name($name);
 
 			# page defaults to 1 if there's other info that suggests this is a socket file
 			$page ||= 1 if ($range_5a || $range_5b || $range_3a || $range_3b);
@@ -6864,6 +6882,16 @@ sub open_fasta {
 	return ($nb_page, $name);
 }
 
+sub format_file_name {
+	my ($name) = @_;
+	$name =~ s/\s+/_/g; # replace spaces with underscores
+	$name =~ s/[\(\)\,\.\;]//g; # remove brackets and punctuation
+	$name =~ s/\|/-/g; # replace pipes with dashes
+	$name =~ s/_$//g; # remove final, terminating underscore
+	$name =~ s/-_/-/g; # fix -_ problems
+	return $name;
+}
+
 sub pp_file_save {
 	my $nb_page = which_nb_page();
 	if ($nb_page eq "primer") {
@@ -6897,7 +6925,7 @@ sub pp_file_save {
 		
 	# save sequence data
 	$save_seq = get_seq();
-	$save_seq2 = $prf{qdna_seq}->get(0.1,"end") if $nb_page eq "qpcr";
+	$save_seq2 = $packed_widgets{qdna_seq}->get(0.1,"end") if $nb_page eq "qpcr";
 	
 	# save selection data
 	my ($hlist) = get_variables('hlist');;
@@ -6918,7 +6946,7 @@ sub pp_file_save {
 	foreach my $i (keys %{ $arrays{$nb_page} }) {
 		$pointer = $arrays{$nb_page}{$i};
 		for my $j (0 .. $#$pointer) {
-			unless (@{$$pointer[$j]}) {
+			unless (ref($$pointer[$j])) {
 				$file_data .= "$i = $$pointer[$j]\n";
 			} else {
 				$file_data .= "$i = @{$$pointer[$j]}\n";
@@ -7063,8 +7091,17 @@ sub get_seq {
 	return 1 unless $$seq_ref;
 	$_ = $$seq_ref->get(0.1,"end");
 	
-	s/\>.*\n//g; #remove FASTA formatting if it exists
-	s/[\n\r]//g; # remove line breaks
+	$_ = clean_seq($_);
+	# s/(\>.*\n)//g; #remove FASTA formatting if it exists
+	# if ($1 && !$open_file{$nb_page}) {
+		# # if FASTA details are present ...
+		# my $name = format_file_name($1);
+		# 
+		# $open_file{$nb_page} = $name;
+		# $top->configure(-title=>"PerlPrimer v$version - $name");
+	# }
+	# 
+	# s/[\n\r]//g; # remove line breaks
 	return $_;
 }
 
@@ -7073,7 +7110,7 @@ sub which_nb_page {
 }
 
 sub get_variables {
-	my $note_page = $nb->raised;
+	my $note_page = which_nb_page();
 	$null = undef;
 	my @return_args;
 	foreach my $var (@_) {
@@ -7118,13 +7155,277 @@ sub balloon_toggle {
 }
 
 
-sub load_icon_data {
+sub check_path {
+	$_ = shift;
+	my $regexp_sep = "\\"."$dir_sep";
+	return $_.$dir_sep unless m/$regexp_sep$/;
+	return $_;
+}
+
+
+sub load_data {
+	#-----
+	#
+	# NN thermodynamics hashes (AA = 5' AA 3'/3' TT 5') derived from ...
+	# 
+	# Allawi HT, SantaLucia J Jr.  Thermodynamics and NMR of internal G.T mismatches in DNA.
+	# 	Biochemistry. 1997 Aug 26;36(34):10581-94
+	#
+	# SantaLucia J Jr.  A unified view of polymer, dumbbell, and oligonucleotide DNA nearest-neighbor thermodynamics.
+	# 	Proc Natl Acad Sci U S A. 1998 Feb 17;95(4):1460-5. 
+	# 
+	# ... with mismatch dG data (AGTG = 5' AG 3'/3' TG 5') derived from ...
+	# 
+	# Peyret N, Seneviratne PA, Allawi HT, SantaLucia J Jr.  Nearest-neighbor thermodynamics and NMR of DNA sequences with internal A.A, C.C, G.G, and T.T mismatches.
+	# 	Biochemistry. 1999 Mar 23;38(12):3468-77. 
+	# 
+	# Allawi HT, SantaLucia J Jr.  Nearest-neighbor thermodynamics of internal A.C mismatches in DNA: sequence dependence and pH effects.
+	# 	Biochemistry. 1998 Jun 30;37(26):9435-44.
+	# 
+	# Allawi HT, SantaLucia J Jr.  Thermodynamics of internal C.T mismatches in DNA.
+	# 	Nucleic Acids Res. 1998 Jun 1;26(11):2694-701. 
+	# 
+	# Allawi HT, SantaLucia J Jr.  Nearest neighbor thermodynamic parameters for internal G.A mismatches in DNA.
+	# 	Biochemistry. 1998 Feb 24;37(8):2170-9.
+	# 
+	# Allawi HT, SantaLucia J Jr.  Thermodynamics and NMR of internal G.T mismatches in DNA.
+	# 	Biochemistry. 1997 Aug 26;36(34):10581-94
+	# 
+	#-----
+	
+	#-------------------#
+	# deltaH (kcal/mol) #
+	#-------------------#
+	
+	%oligo_dH=qw(
+		AA -7.9 TT -7.9 
+		AT -7.2 TA -7.2 
+		CA -8.5 TG -8.5 
+		GT -8.4 AC -8.4 
+		CT -7.8 AG -7.8 
+		GA -8.2 TC -8.2 
+		CG -10.6 GC -9.8 
+		GG -8.0 CC -8.0 
+		initC 0.1 initG 0.1 
+		initA 2.3 initT 2.3
+	);
+	
+	%oligo_dH_full=(
+		qw(AATT -7.9 	TTAA -7.9 
+		ATTA -7.2 	TAAT -7.2 
+		CAGT -8.5 	TGAC -8.5 
+		GTCA -8.4 	ACTG -8.4 
+		CTGA -7.8 	AGTC -7.8 
+		GACT -8.2 	TCAG -8.2 
+		CGGC -10.6 	GCCG -9.8 
+		GGCC -8.0 	CCGG -8.0
+			
+		initC 0.1 	initG 0.1 
+		initA 2.3 	initT 2.3),
+		
+		# Like pair mismatches 
+			
+		qw(AATA 1.2 	ATAA 1.2
+		CAGA -0.9 	AGAC -0.9
+		GACA -2.9 	ACAG -2.9
+		TAAA 4.7 	AAAT 4.7 
+		
+		ACTC 0.0 	CTCA 0.0 
+		CCGC -1.5 	CGCC -1.5
+		GCCC 3.6 	CCCG 3.6 
+		TCAC 6.1 	CACT 6.1 
+		
+		AGTG -3.1 	GTGA -3.1
+		CGGG -4.9 	GGGC -4.9
+		GGCG -6.0 	GCGG -6.0
+		TGAG 1.6 	GAGT 1.6 
+		
+		ATTT -2.7 	TTTA -2.7
+		CTGT -5.0 	TGTC -5.0
+		GTCT -2.2 	TCTG -2.2
+		TTAT 0.2 	TATT 0.2  ),
+		
+		# G.T mismatches 
+		
+		qw(AGTT 1.0  	TTGA 1.0
+		ATTG  -2.5 	GTTA  -2.5
+		CGGT  -4.1 	TGGC  -4.1
+		CTGG  -2.8 	GGTC  -2.8
+		GGCT  3.3 	TCGG  3.3
+		GGTT  5.8 	TTGG  5.8
+		GTCG  -4.4 	GCTG  -4.4
+		GTTG  4.1 	GTTG  4.1
+		TGAT  -0.1 	TAGT  -0.1
+		TGGT  -1.4 	TGGT  -1.4
+		TTAG  -1.3 	GATT  -1.3), 
+		
+		# G.A mismatches 
+		
+		qw(AATG  -0.6 	GTAA  -0.6
+		AGTA  -0.7 	ATGA  -0.7
+		CAGG  -0.7 	GGAC  -0.7
+		CGGA  -4.0 	AGGC  -4.0
+		GACG  -0.6 	GCAG  -0.6
+		GGCA  0.5 	ACGG  0.5
+		TAAG  0.7 	GAAT  0.7
+		TGAA  3.0 	AAGT  3.0), 
+		
+		# C.T mismatches 
+		
+		qw(ACTT  0.7 	TTCA  0.7
+		ATTC  -1.2 	CTTA  -1.2
+		CCGT  -0.8 	TGCC  -0.8
+		CTGC  -1.5 	CGTC  -1.5
+		GCCT  2.3 	TCCG  2.3 
+		GTCC  5.2 	CCTG  5.2 
+		TCAT  1.2 	TACT  1.2 
+		TTAC  1.0 	CATT  1.0), 
+		
+		# A.C mismatches 
+		
+		qw(AATC  2.3	CTAA  2.3
+		ACTA  5.3 	ATCA  5.3 
+		CAGC  1.9 	CGAC  1.9 
+		CCGA  0.6 	AGCC  0.6 
+		GACC  5.2 	CCAG  5.2 
+		GCCA  -0.7 	ACCG  -0.7
+		TAAC  3.4  	CAAT  3.4 
+		TCAA  7.6 	AACT  7.6),
+	
+	);
+	
+	#--------------------#
+	# deltaS (cal/K.mol) #
+	#--------------------#
+	
+	%oligo_dS=qw(
+		AA -22.2 TT -22.2 
+		AT -20.4 TA -21.3 
+		CA -22.7 TG -22.7 
+		GT -22.4 AC -22.4 
+		CT -21.0 AG -21.0 
+		GA -22.2 TC -22.2 
+		CG -27.2 GC -24.4 
+		GG -19.9 CC -19.9 
+		initC -2.8 initG -2.8 
+		initA 4.1 initT 4.1 
+		sym -1.4
+	);
+	
+	%oligo_dS_full=(
+		qw(AATT -22.2 	TTAA -22.2 
+		ATTA -20.4 	TAAT -21.3 
+		CAGT -22.7 	TGAC -22.7 
+		GTCA -22.4 	ACTG -22.4 
+		CTGA -21.0 	AGTC -21.0 
+		GACT -22.2 	TCAG -22.2 
+		CGGC -27.2 	GCCG -24.4 
+		GGCC -19.9 	CCGG -19.9
+			
+		initC -2.8 	initG -2.8 
+		initA 4.1 	initT 4.1
+		sym -1.4),
+		
+		# Like pair mismatches
+			
+		qw(AATA 1.7 	ATAA 1.7
+		CAGA -4.2 	AGAC -4.2 
+		GACA -9.8 	ACAG -9.8 
+		TAAA 12.9 	AAAT 12.9 
+		
+		ACTC -4.4 	CTCA -4.4 
+		CCGC -7.2 	CGCC -7.2 
+		GCCC 8.9 	CCCG 8.9 
+		TCAC 16.4 	CACT 16.4 
+		
+		AGTG -9.5 	GTGA -9.5 
+		CGGG -15.3 	GGGC -15.3
+		GGCG -15.8 	GCGG -15.8
+		TGAG 3.6 	GAGT 3.6 
+		
+		ATTT -10.8 	TTTA -10.8
+		CTGT -15.8 	TGTC -15.8
+		GTCT -8.4 	TCTG -8.4 
+		TTAT -1.5 	TATT -1.5),
+		
+		# G.T mismatches
+		
+		qw(AGTT 0.9 	TTGA 0.9
+		ATTG  -8.3 	GTTA  -8.3
+		CGGT  -11.7 	TGGC  -11.7
+		CTGG  -8.0 	GGTC  -8.0
+		GGCT  10.4 	TCGG  10.4
+		GGTT  16.3 	TTGG  16.3
+		GTCG  -12.3 	GCTG  -12.3
+		GTTG  9.5 	GTTG  9.5
+		TGAT  -1.7 	TAGT  -1.7
+		TGGT  -6.2 	TGGT  -6.2
+		TTAG  -5.3 	GATT  -5.3), 
+		
+		# G.A mismatches
+		
+		qw(AATG  -2.3 	GTAA  -2.3
+		AGTA  -2.3 	ATGA  -2.3
+		CAGG  -2.3 	GGAC  -2.3
+		CGGA  -13.2 	AGGC  -13.2
+		GACG  -1.0 	GCAG  -1.0
+		GGCA  3.2 	ACGG  3.2
+		TAAG  0.7 	GAAT  0.7
+		TGAA  7.4 	AAGT  7.4), 
+		
+		# C.T mismatches
+		
+		qw(ACTT  0.2 	TTCA  0.2
+		ATTC  -6.2 	CTTA  -6.2
+		CCGT  -4.5 	TGCC  -4.5
+		CTGC  -6.1 	CGTC  -6.1
+		GCCT  5.4 	TCCG  5.4 
+		GTCC  13.5 	CCTG  13.5
+		TCAT  0.7 	TACT  0.7 
+		TTAC  0.7 	CATT  0.7), 
+		
+		# A.C mismatches
+		
+		qw(AATC  4.6 	CTAA  4.6
+		ACTA  14.6 	ATCA  14.6
+		CAGC  3.7 	CGAC  3.7 
+		CCGA  -0.6 	AGCC  -0.6
+		GACC  14.2 	CCAG  14.2
+		GCCA  -3.8 	ACCG  -3.8
+		TAAC  8.0  	CAAT  8.0 
+		TCAA  20.2 	AACT  20.2),
+	
+	);
+	
+	
+	# Genetic code hash
+	%genetic_code=qw(
+			TTT F TTC F TTA L TTG L
+			CTT L CTC L CTA L CTG L
+			ATT I ATC I ATA I ATG M
+			GTT V GTC V GTA V GTG V
+			TCT S TCC S TCA S TCG S
+			CCT P CCC P CCA P CCG P
+			ACT T ACC T ACA T ACG T
+			GCT A GCC A GCA A GCG A
+			TAT Y TAC Y TAA * TAG *
+			CAT H CAC H CAA Q CAG Q
+			AAT N AAC N AAA K AAG K
+			GAT D GAC D GAA E GAG E
+			TGT C TGC C TGA * TGG W
+			CGT R CGC R CGA R CGG R
+			AGT S AGC S AGA R AGG R
+			GGT G GGC G GGA G GGG G
+	);
+}
 
 #----------------------#
 # Icon and pixmap data #
 #----------------------#
 
 # ... just a little bit of bloat :)
+
+sub load_icon_data {
 
 $perlprimer_icon = <<'end_of_pixmap';
 /* XPM */

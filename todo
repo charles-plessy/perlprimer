@@ -1,8 +1,6 @@
 For v1.2
 
-*  Ability to use local BLAST server
-
-*  Internal GUI code re-write
+*  Blast search dialogue should include a list of sequences that match both the forward and reverse primers
 
 *  More intelligent sequencing primer design - search for primers around the midpoint between minimum and maximum distances, and then gradually move out
 
