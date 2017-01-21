@@ -1,3 +1,19 @@
+21/06/04:	(PerlPrimer-1.1.4)
+		View spidey output command now runs spidey directly
+		Win32::FileOp code disabled - causes redraw problems with Perl/Tk
+		Minor code tidying
+
+17/06/04:	BUGFIX: Fixed a bug added in the last version that did not reverse the 3' restriction enzyme site and anchor when adding cloning sequences
+
+28/04/04:	Work begun on unequal loops primer-dimer routines (not fully implemented as yet)
+
+22/04/04:	Code to support Win32::FileOp if it exists under windows for selecting directories, as DirTree seems flakey at best with some extremely eratic behaviour.  This is not currently an ActivePerl module, so will only be relevant for the Windows installer version.
+
+21/04/04:	(PerlPrimer-1.1.3a)
+		Windows installer version only
+		PerlPrimer now searches for Spidey in the PerlPrimer directory on startup
+		Minor code tidying
+
 19/04/04:	(PerlPrimer-1.1.3)
 		Trial self-executable format for Windows (warning: >3 Mb download) created using PAR (http://par.perl.org)
 		Save DNA sequence dialogue now has options for both .fasta and .txt formats (default is .fasta)

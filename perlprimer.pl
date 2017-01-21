@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.3 (19/4/2004)
+# version 1.1.4 (21/6/2004)
 # Copyright © 2003-2004, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -22,17 +22,17 @@
 # USA
 
 use strict;
-no strict 'refs';
 
 #---------------#
 # Usage message #
 #---------------#
 
-my ($version, $commandline);
+my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.3";
+	$version = "1.1.4";
 	($commandline) = @ARGV;
-
+	# $win_exe = 1;
+	
 	if ($commandline && $commandline =~ /^-[\w-]+/) {
 		print <<EOT;
 PerlPrimer v$version
@@ -42,6 +42,20 @@ Copyright © 2003-2004 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
+	}
+	
+	# Usage message for the Win32 dos box for the exe version:
+	if ($win_exe) {
+		print <<EOT;
+PerlPrimer v$version 
+Copyright © 2003-2004 Owen Marshall
+Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
+
+This window is required for PerlPrimer to run - 
+you may minimise it but please do not close it
+
+Please wait while PerlPrimer loads ...		
+EOT
 	}
 }
 
@@ -67,8 +81,11 @@ BEGIN {
 			/(use|require)\s*([\w:-]+)\;/;
 			my $package = $2;
 			
+			$failed_packages .= " $package ";
+			
 			# Special circumstances!
 			return if $package eq "Benchmark";
+			return if $package eq "Win32::FileOp";
 			if ($package eq "Tk") {
 				print "Error: Perl/Tk not found!\nPerlPrimer requires Perl/Tk to run - please download from CPAN (http://cpan.org) and install before running.\n\n";
 				exit 0;
@@ -78,7 +95,6 @@ BEGIN {
 			}		
 					
 			print "Warning: PerlPrimer requires $package for full functionality\n- some features may be disabled.\n$package should be obtainable from CPAN (http://cpan.org)\n\n";
-			$failed_packages .= " $package ";
 		}
 	};	
 	
@@ -691,13 +707,20 @@ my $activebackground_color="#ececec";
 my (%spidey_exec);
 my $spidey_path = "$HOME";
 
-my $spidey_out;
+# search for spidey in program directory
+my @spidey_files = glob("$program_directory*pidey.*");
+@spidey_files = glob("$program_directory*pidey*") unless @spidey_files;
+if (@spidey_files) {
+	$spidey_path = $program_directory;
+}
+
+# my $spidey_out;
 
 # More global variables
 my (
 	$primer_f, $primer_r, $pos,
 	$rprimer_r,
-	$pd, @score_sort, $dna_canvas_size, $reverse,
+	$pd, @score_sort, $reverse,
 	$pfkeys, $pkeys, @PF, @PR, %primer_hash,
 	$gc_exclude, $gc_percent_ex, @primer_pairs,
 	$prl, $pfl, $pl, @bind_string, %rating_hash, @score,
@@ -756,6 +779,12 @@ my $file_types_dna = [
 	['Text Files', '.txt'],
 	['All Files', '*']
 	];
+
+my $file_types_text = [
+	['Text Files', '.txt'],
+	['All Files', '*']
+	];
+
 
 
 # Open file hash (for writing reports)
@@ -1730,6 +1759,10 @@ $top->bind($class,'<3>', \&menu_popup);
 # Socket code for contig viewer
 my ($sock, $sel, $sock_repeat_id);
 setup_sock();
+
+if ($win_exe) {
+	print "\nPerlPrimer started successfully\n";
+}
 
 MainLoop();
 
@@ -3057,12 +3090,7 @@ sub primer_dimer {
 	for $k (0 .. $prl-1) {
 		$primer_comp[$k]=$primer_hash{substr($rcomprlc, $k, 1)};
 	}
-	
-	# # print the matrix - for debugging
-	# for $k (0 .. $prl-1) {
-		# print "$k:\t@{$primer_comp[$k]}\n";
-	# }
-	
+		
 	# read each combination from the matrix, calculate dG for each dimer
 	my $pd_len = ($pd_full ? $pfl+$prl-1 : $pl-2);
 	for $k (0 .. $pd_len) {
@@ -3140,6 +3168,202 @@ sub primer_dimer {
 		
 	# Returns the most stable dimer
 	return $score_sort[0];
+}
+
+sub primer_dimer_new {
+	# This is my second attempt at implementing a primer-dimer system:
+	# The first attempt aligned each combination together explicitly; this attempt
+	# creates a binding matrix and then reads each primer combination from the
+	# matrix.  It's not significantly faster, but it does have the advantage of
+	# extending this algorithm to allow for unequal loops (although this has not
+	# been implemented as yet) and providing the possiblity of reading all
+	# primer-dimers (not just 3') by adjusting a single variable (which is used when
+	# displaying primer information.
+	
+	### TODO:
+	# It is easily possible to calculate *all* primers when searching for primer
+	# pairs ... I really should add a preferences option to do this ...
+	
+	my ($primer_f, $primer_r) = @_;
+	return unless ($primer_f) && ($primer_r);
+			
+	my ($k, $l);
+	@score=();
+	%primer_hash=();
+	@score_sort=();
+	@bind_string=();
+	%rating_hash=();
+		
+	# $pl = greatest length
+	$pfl=length($primer_f);
+	$prl=length($primer_r);
+	$pl = ($pfl>$prl ? $pfl : $prl);
+	
+	my $rcompr = reverse(complement($primer_r));
+	my $rcomprlc = lc($rcompr);
+	my $fprimer_r=lc(reverse($primer_f));
+	$rprimer_r=reverse($primer_r);
+	
+	# Scan the primers against each other:
+	# The default is to only consider 3' primer-dimers, for speed concerns (5'
+	# pd's will reduce the primer population, but won't cause extendible dimers) -
+	# however, setting $pd_full to 1 will calculate all primer-dimers.  This is
+	# currently used only when viewing individual primers, for both speed concerns
+	# and because it's 3' primer-dimers that are the real problem in PCR.
+	
+	# create a binding array for each of the four bases
+	for $l (0 .. $pfl-1) {
+		my $mbase = substr($fprimer_r, $l, 1);
+		$primer_hash{$mbase}[$l]=1;
+		for $k qw(a g c t) {
+			$primer_hash{$k}[$l] ||=0;
+		}
+	}
+		
+	# create the primer matrix
+	my @primer_comp;
+	for $k (0 .. $prl-1) {
+		$primer_comp[$k]=$primer_hash{substr($rcomprlc, $k, 1)};
+	}
+	
+	# print the matrix - for debugging
+	print "$primer_f vs. $primer_r - full pd = $pd_full\n";
+	print "  \t";
+	for $l (0 .. $pfl-1) {
+		my $mbase = substr($fprimer_r, $l, 1);
+		print "$mbase ";
+	}
+	print "\n";
+	for $k (0 .. $prl-1) {
+		my $base = substr($rprimer_r, $k, 1);
+		print "$base:\t@{$primer_comp[$k]}\n";
+	}
+	
+	my @binding_data;
+	# read each combination from the matrix, calculate dG for each dimer
+	my $pd_len = ($pd_full ? $pfl+$prl-1 : $pl-2);
+	for my $k (0 .. $pd_len) {
+		$score[$k]=0;
+		my $bind;
+		my $score_p=0;
+		
+		# starting coords
+		my $pf_coord_start = ($k >= $pfl ? $pfl-1 : $k);
+		my $pr_coord_start = ($k - $pfl > 0 ? $k - $pfl : 0);
+		my ($pf_coord, $pr_coord, $first, $flag);
+		
+		# read through each combination finding multiple matches
+		for ($pf_coord = $pf_coord_start, $pr_coord = $pr_coord_start;
+				$pf_coord>=0 && $pr_coord<$prl;
+				$pf_coord--,$pr_coord++) {
+			# read base
+			print "error: \[$pr_coord\] \[$pf_coord\]\n\n" unless defined($primer_comp[$pr_coord][$pf_coord]);			
+			if ($primer_comp[$pr_coord][$pf_coord]==1) {
+				# binding bases
+				$bind++;
+				if ($flag) {
+					next;
+				} else {
+					$first=$pf_coord;
+					$flag=1;
+				}
+			} elsif ($flag) {
+				# end of a binding stretch
+				push @binding_data, [$k, $first, $bind] if $bind > 1;
+				$bind=0;
+				$flag=0;
+			}
+				
+			# set up for next loop
+			# $pf_coord--;
+			# $pr_coord++;
+			# last if $pf_coord<0 || $pr_coord>$prl;
+			# redo;
+		}
+	}
+	
+	# check for best binding for each possibility that yeilds two or more matched bases together
+	my $last;
+	my @unequal_loops;
+	foreach my $i (@binding_data) {
+		# skip multiple matches
+		# next if @$i[0] == $last;
+		# 
+		# $last = @$i[0];
+		my $pf_coord = @$i[1];
+		my $length = @$i[2];
+		
+		print "@$i\n";
+	}
+		
+		
+			
+		
+		# # extensible primer short-circuit - ignore all primers that will
+		# # not create extensible (i.e. amplifiable) dimers
+		# # my $start = $k>$pfl-1 ? $pfl-1 : $k;
+		# # my $end = $k>$prl-1 ? $prl-1 : $k;
+		# # if ($pd_extensible && !$pd_full) {
+			# # next unless $primer_comp[0][$start] == 1;
+			# # next unless $primer_comp[$end][$start-$k] == 1;
+		# # }
+				# 
+		# # read the binding data
+		# for $l (0 .. $prl-1) {
+			# if (($k-$l)<$pfl) {
+				# $bind .= $primer_comp[$l][$k-$l] if ($k-$l)>=0;
+			# } else {
+				# # spacer
+				# $bind .= "2";
+			# }
+		# }
+		# 
+		# # Single matched bases surrounded by mismatches are unstable,
+		# # so we remove them with the regexp (look ahead is needed otherwise
+		# # strings of consecutive match/mismatches are not caught)
+		# $bind =~ s/01(?=[^1])/00/gx;
+		# 
+		# # Short circuit if there's nothing to bind
+		# next unless $bind =~ /[1]/;
+		# 
+		# # Find start and end of similarity
+		# my ($pb_init,$pb_end);
+		# for $l (0 .. length($bind)-1) {
+			# # at first I tried finding the initiating terminal bases with
+			# # regexps, but that was much slower ...
+			# if (substr($bind, $l, 1) eq "1") {
+				# defined($pb_init) || ($pb_init = $l);
+				# $pb_end=$l;
+			# }
+		# }
+				# 
+		# if (defined($pb_init)) {
+			# # deltaG calculation
+			# for $l ($pb_init .. $pb_end-1) {
+				# next if substr($bind, $l, 2) eq "00";
+				# next if substr($bind, $l, 1) eq "2";
+				# $score_p+=$oligo_dG{substr($primer_f, $pfl-$k+$l-1, 2).substr($rprimer_r, $l, 2)};
+			# }
+			# 
+			# # init term corrections
+			# my $initterm="init" . substr($rprimer_r, $pb_init, 1);
+			# $score_p+= $oligo_dG{$initterm};
+			# 
+			# my $endterm="init" . substr($rprimer_r, $pb_end, 1);
+			# $score_p+= $oligo_dG{$endterm};
+			# 
+			# # add to the hash ...
+			# $score[$k]=sprintf("%.2f",$score_p);
+			# $bind_string[$k]=$bind;
+			# $rating_hash{$score[$k]}=$k;
+		# }
+	# }
+	# 
+	# # sort the dimers to give the most stable:	
+	# @score_sort = sort { $a <=> $b } @score;
+		# 
+	# # Returns the most stable dimer
+	# return $score_sort[0];
 }
 
 
@@ -3586,8 +3810,7 @@ sub get_qprimers {
 	$cancel=0;
 	$bs=0;
 		
-	my $mrna_seq;
-	($spidey_out, $mrna_seq) = run_spidey(1);
+	my ($spidey_out, $mrna_seq) = run_spidey(1);
 	return if $cancel == 1;
 						
 	@PF=@PR=();	
@@ -3779,9 +4002,12 @@ sub find_re_sites {
 
 
 sub run_spidey {
+	my ($print_alignment) = @_;
+	$print_alignment ||= 0;
+	
 	# Find the spidey executable
-	my @spidey_files = glob($spidey_path."*pidey.*");
-	@spidey_files = glob($spidey_path."*pidey*") unless @spidey_files;
+	my @spidey_files = glob("$spidey_path*pidey.*");
+	@spidey_files = glob("$spidey_path*pidey*") unless @spidey_files;
 	
 	unless (@spidey_files) {
 		dialogue("Error: cannot find the Spidey executable in $spidey_path\n\nIf this is not the directory where Spidey is located, please specify the correct location in the Preferences");
@@ -3797,17 +4023,13 @@ sub run_spidey {
 	my $largest = (sort {$b <=> $a} keys %sizes_names)[0];
 	my $spidey_exec = $sizes_names{$largest};
 	
-	my $spidey_command = $spidey_exec." -i ".$tmp.".dna_tmp -m ".$tmp.".mrna_tmp ";
-	my $spidey_out;
+	my $spidey_command = "$spidey_exec -i $tmp.dna_tmp -m $tmp.mrna_tmp -p $print_alignment";
 
 	my $mrna_seq = $prf{"qmrna_seq"}->get(0.1,"end");
 	my $dna_seq = $prf{"qdna_seq"}->get(0.1,"end");
 	
 	# Spidey will only accept input as files, so we need to move the two
 	# sequences to temporary files
-	### Only they're not temporary at present!  Really should delete them at the end ...
-	### or at the very least, save them to a user-definable temp directory (/tmp or c:\tmp)
-	### perhaps run a check on a default temp directory's existence, and otherwise use $HOME
 	unless (open (MRNA, ">".$tmp.".mrna_tmp")) {
 		dialogue("Error: could not write mRNA temp file: $!\n");
 		$cancel=1;
@@ -3826,8 +4048,12 @@ sub run_spidey {
 
 	# run spidey ...
 	sbarprint("\nRunning spidey ...");
-	$_ = `$spidey_command -p $_[0]`;
+	$_ = `$spidey_command`;
 	
+	# open(SPIDEY, "$spidey_command -p $_[0] |");
+	# $_ = join("",<SPIDEY>);
+	# close SPIDEY;
+		
 	# abort and complain if we don't see the --SPIDEY signature
 	unless (/--SPIDEY/) {
 		dialogue("Error: Cannot run Spidey executable\n(check that $spidey_exec exists?)");
@@ -3843,7 +4069,7 @@ sub run_spidey {
 	# ... and try using the large intron option if they have
 	unless (/overall percent identity: 100\.0%/ && /mRNA coverage: 100%/) {
 		print "Trying spidey again using large intron option ...\n";
-		$_ = `$spidey_command -p $_[0] -X`;
+		$_ = `$spidey_command -X`;
 		
 		# if things are still crap, display a dialogue with spidey's output,
 		# so the user can work out what's gone wrong
@@ -3999,6 +4225,7 @@ sub copy_selected_primers {
 				} elsif ($j == 4 && $primer_seq_5r) {
 					my $rprimer = $$slist[$sel][$j];
 					my ($primer_seq_5r_real, $insert_r) = (add_cloning($seq, '', '', $rprimer, $$slist[$sel][8]))[5,6];
+					# print 
 					$clip .= uc("$primer_seq_5r_real$insert_r\_$rprimer\t");
 				} else {
 					$clip .= "$$slist[$sel][$j]\t";
@@ -4678,7 +4905,7 @@ sub browse_primer {
 	
 	my $width = $$canv->width;
 	my $height= $$canv->height;
-	$dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
+	my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
 	
 	$$canv->delete('primerf','primerr');
 	
@@ -4865,9 +5092,9 @@ EOT
 		my $filename = $open_file{$nb_page};
 		$filename =~ s/\.ppr//g;
 		$filename .= "_report";
-		$file = $top->getSaveFile(-defaultextension=>'.txt', -initialfile=>$filename);
+		$file = $top->getSaveFile(-defaultextension=>'.txt', -initialfile=>$filename, -filetypes=>$file_types_text);
 	} else {
-		$file = $top->getSaveFile(-defaultextension=>'.txt');
+		$file = $top->getSaveFile(-defaultextension=>'.txt', -filetypes=>$file_types_text);
 	}
 	
 	if (defined($file)) {
@@ -5101,15 +5328,17 @@ EOT
 	
 		
 sub view_spidey_out {
+	my ($spidey_out) = run_spidey(1);
+	
 	my $spidey_d = $top->Toplevel(-title=>'Spidey output');
 	my $spidey_d_f = $spidey_d->Frame()->pack(-expand=>1, -fill=>'both');
 	my $spidey_d_fb = $spidey_d->Frame()->pack(-side=>'bottom', -fill=>'x');
 	$spidey_d->Icon(-image => $pixmap);
 	
-	pack_gui('', '', 'spidey_text', \$spidey_d_f, 't', 60, 15, 1, '');
+	pack_gui('', '', 'spidey_text', \$spidey_d_f, 't', 100, 25, 1, 0);
 	pack_gui("OK", sub {$spidey_d->destroy}, "spidey_OK", \$spidey_d_fb, "b", "active", 0);
 	pack_gui("Full output", sub {
-			($spidey_out,) = run_spidey(0);
+			($spidey_out) = run_spidey(0);
 			$prf{'spidey_text'}->delete('0.1', 'end');
 			$prf{'spidey_text'}->insert('0.1', $spidey_out)
 		}, "spidey_full", \$spidey_d_fb, "b", "normal", 1);
@@ -5169,31 +5398,37 @@ sub prefs {
 	# for some time, thus it lacks the chooseDirectory command.
 	my $browse_directory = sub {
 		my ($dir_ref, $title) = @_;
-		my $w = $top->Toplevel(-title=>"Select $title directory");
-		my $w_b = $w->Frame()->pack(-side=>'bottom', -padx=>2, -fill=>'none');
-		
-		my $dir;
-		my $dir_list;
-		
-		# more code to cover up for windows bugs
-		my $initial_dir = $$dir_ref;
-		$initial_dir =~ s/(\w:\\).*/$1/;
-		
-		$dir_list = $w->Scrolled('DirTree',
-				-width=>45,
-				-height=>35,
-				-scrollbars=>'osoe',
-				-selectmode=>'browse',
-				-command=> sub {$dir_list->opencmd(shift)},
-				-browsecmd=> sub {$dir = shift},
-				-directory=>$initial_dir,
-				)->pack(-fill=>'both', -expand=>1);
-		nr(\$w_b);
-		pack_gui('OK', sub {$w->destroy; $dir =~ s/\//\\/g if $os eq 'win'; $$dir_ref=$dir.$dir_sep}, 'bd_ok', '', 'b');
-		pack_gui('Cancel', sub {$w->destroy}, 'bd_cancel', '', 'b');
-		$w->Icon(-image => $pixmap);
-		bind_mousewheel($dir_list);
-		# $dir_list->opencmd($$dir_ref);
+		# if (check_packages_no_warn("Win32::FileOp")) {
+			# # currently disabled
+			# my $dir = BrowseForFolder("Please select $title directory");
+			# $$dir_ref = $dir.$dir_sep if $dir;
+		# } else {
+			my $w = $top->Toplevel(-title=>"Select $title directory");
+			my $w_b = $w->Frame()->pack(-side=>'bottom', -padx=>2, -fill=>'none');
+			
+			my $dir;
+			my $dir_list;
+			
+			# more code to cover up for windows bugs
+			my $initial_dir = $$dir_ref;
+			$initial_dir =~ s/(\w:\\).*/$1/;
+					
+			$dir_list = $w->Scrolled('DirTree',
+					-width=>45,
+					-height=>35,
+					-scrollbars=>'osoe',
+					-selectmode=>'browse',
+					-command=> sub {$dir_list->opencmd(shift)},
+					-browsecmd=> sub {$dir = shift},
+					-directory=>$initial_dir,
+					)->pack(-fill=>'both', -expand=>1);
+			nr(\$w_b);
+			pack_gui('OK', sub {$w->destroy; $dir =~ s/\//\\/g if $os eq 'win'; $$dir_ref=$dir.$dir_sep}, 'bd_ok', '', 'b');
+			pack_gui('Cancel', sub {$w->destroy}, 'bd_cancel', '', 'b');
+			$w->Icon(-image => $pixmap);
+			bind_mousewheel($dir_list);
+			# $dir_list->chdir($$dir_ref);
+		# }
 	};
 	
 	nr(\$prefs_page_general_f, 2);
@@ -5721,16 +5956,16 @@ sub draw_dna {
 		= get_variables(qw(min_ampsize max_ampsize max_range_5p min_range max_range max_range_3p canvas)); 
 
 	my $seq = get_seq();
+	return unless $seq =~ /[a|t|c|g]/i;
 	
 	# delete old canvas elements
 	$$canvas->delete('dna', 'amp_range', 'gene_range', 'dna_range','primerf','primerr', 'direction', 'ie_boundary');
 	
-	return unless $seq =~ /[a|t|c|g]/i;
 	
 	# get dimensions of canvas
 	my $width = $$canvas->width;
 	my $height= $$canvas->height;
-	$dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
+	my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
 	
 	my $canv = which_nb_page();
 	
@@ -5790,6 +6025,11 @@ sub items_drag {
 	my $width = $$ref->width;
 	my $dna_max = $width-$dna_canvas_offset;
 	my $dna_min = $dna_canvas_offset;
+	
+	my $seq = get_seq();
+	return unless $seq =~ /[a|t|c|g]/i;
+
+	my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
 	
 	$x = sprintf("%.0f", $$ref->canvasx($x));
 	$x = $dna_min if $x < $dna_min;
@@ -5856,6 +6096,12 @@ sub amplicon_drag {
 	my $width = $$ref->width;
 	my $dna_max = $width-$dna_canvas_offset;
 	my $dna_min = $dna_canvas_offset;
+	
+	my $seq = get_seq();
+	return unless $seq =~ /[a|t|c|g]/i;
+
+	my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
+
 
 	$x = sprintf("%.0f", $$ref->canvasx($x));
 	$x = $dna_min if $x < $dna_min;
@@ -5881,7 +6127,6 @@ sub amplicon_drag {
 	}
 
 	
-	my $seq = get_seq();
 	$seq = clean_seq($seq);
 	my $seq_len = length($seq)-1;
 	
@@ -6040,7 +6285,7 @@ sub add_cloning {
 	
 	my $insert_f = "";
 	my $insert_r = "";
-	my ($primer_seq_5f_real, $rprimer_seq_5r_real);
+	my ($primer_seq_5f_real, $rprimer_seq_5r_real, $primer_seq_5r_real);
 	
 	if ($primer_seq_5f && $fprimer) {
 		# calculate frame position for forward primer + insert
@@ -6075,7 +6320,7 @@ sub add_cloning {
 		# my $renz_offset_r = 3-length($rspl2);
 		
 		s/[\|_]//g;
-		my $primer_seq_5r_real = $_;
+		$primer_seq_5r_real = $_;
 		$rprimer_seq_5r_real = reverse($primer_seq_5r_real);
 		
 		if (defined($primer_seq_5r_frame) && ($primer_seq_5r_frame ne "")) {
@@ -6089,7 +6334,7 @@ sub add_cloning {
 		$rprimerposl += length($insert_r)+length($primer_seq_5r_real);
 	}
 	
-	return ($primer_seq_5f_real, $insert_f, $fprimer, $fprimerpos, $fprimerposl, $rprimer_seq_5r_real, $insert_r, $rprimer, $rprimerpos, $rprimerposl);
+	return ($primer_seq_5f_real, $insert_f, $fprimer, $fprimerpos, $fprimerposl, $primer_seq_5r_real, $insert_r, $rprimer, $rprimerpos, $rprimerposl);
 }
 
 sub dna_magnify {
@@ -6099,6 +6344,8 @@ sub dna_magnify {
 	# Design could still do with a bit of tweaking ...
 	my ($x, $report) = @_;
 	my $seq = get_seq();
+	return unless $seq =~ /[a|t|c|g]/i;
+
 	my $page = which_nb_page();
 	my ($max_range_5p, $min_range, $max_range, $max_range_3p, $primer_array, $list_ref, $ref) 
 		= get_variables(qw(max_range_5p min_range max_range max_range_3p primers hlist canvas));
@@ -6106,7 +6353,7 @@ sub dna_magnify {
 	
 	# get dimensions of canvas
 	my $width = $$ref->width;
-	$dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
+	my $dna_canvas_size=($width-($dna_canvas_offset*2))/length($seq);
 	
 	# This sub used to jump to the exact position right clicked; however, all I ever
 	# want to do is look at the primers, so I feel the routine would be better jumping
@@ -6338,9 +6585,11 @@ sub dna_magnify {
 	# my $center_base_pos = $base_pos-30;
 	# $$text_ref->see("1.$center_base_pos");
 	
-	# Show the forward primer
-	my $center_base_pos = $fprimerpos-30;
-	$$text_ref->see("1.$center_base_pos");
+	# Show the forward primer if it exists
+	if ($fprimerpos) {
+		my $center_base_pos = $fprimerpos-30;
+		$$text_ref->see("1.$center_base_pos");
+	}
 }
 
 
@@ -6824,6 +7073,17 @@ sub check_packages {
 	}
 	return 1 if $failed;
 }
+
+sub check_packages_no_warn {
+	my $failed;
+	foreach (@_) {
+		if ($failed_packages =~ / $_ /) {
+			$failed = 1;
+		}
+	}
+	return 1 if $failed;
+}
+
 
 #----------------------#
 # Balloon state toggle #
