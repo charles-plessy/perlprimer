@@ -3,8 +3,8 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.14 (22/6/2006)
-# Copyright © 2003-2006, Owen Marshall
+# version 1.1.16pre1 (20 Nov 2008)
+# Copyright © 2003-2008, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.14";
+	$version = "1.1.16";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -39,7 +39,7 @@ BEGIN {
 PerlPrimer v$version
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-Copyright © 2003-2006 Owen Marshall\n
+Copyright © 2003-2008 Owen Marshall\n
 Usage: perlprimer.pl [file.ppr]\n
 EOT
 		exit 0;
@@ -49,7 +49,7 @@ EOT
 	if ($win_exe) {
 		print <<EOT;
 PerlPrimer v$version 
-Copyright © 2003-2006 Owen Marshall
+Copyright © 2003-2008 Owen Marshall
 Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
 This window is required for PerlPrimer to run - 
@@ -75,7 +75,7 @@ BEGIN {
 	my $eval_sub = sub {
 		eval $_;
 		if ($@) {
-			/(use|require)\s*([\w:-]+)\;/;
+			/(use|require)\s*([\w:\-\(\)]+)\;/;
 			my $package = $2;
 			
 			$failed_packages .= " $package ";
@@ -83,11 +83,11 @@ BEGIN {
 			# Special circumstances!
 			return if $package eq "Benchmark";
 			return if $package eq "File::Copy";
-			return if $package eq "Win32::GUI";
+			return if $package eq "Win32::GUI()";
 			
 			# Print warning header if not already printed
 			unless ($warning) {
-				print "PerlPrimer v$version\nCopyright © 2003-2005 Owen Marshall\n\n";
+				print "PerlPrimer v$version\nCopyright © 2003-2008 Owen Marshall\n\n";
 				$warning = 1;
 			}
 			
@@ -110,7 +110,7 @@ use Benchmark;
 use HTTP::Request;
 use LWP::UserAgent;
 use IO::Socket;
-use Win32::GUI;
+use Win32::GUI();
 use File::Copy;
 use File::Glob ':glob';
 require Tk::NoteBook;
@@ -4708,7 +4708,9 @@ sub fetch_ensembl {
 	
 	# ... and as of 06/2006, Ensembl is back to "searchview"!  Worse, textview works (thereby removing
 	# my supposedly failsafe error message) but returns no matches.  Sheesh ...
-	$_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
+	# $_ = http_get("http://www.ensembl.org/$ensembl_organism/searchview?species=$ensembl_organism&idx=Gene&q=$ensembl_gene");
+	$_ = http_get("http://www.ensembl.org/$ensembl_organism/Search/Summary?species=$ensembl_organism;idx=Gene;q=$ensembl_gene");
+	# print "$_\n\n";
 		
 	s/<\/*span.*?>//g; # rip out highlight spans
 	s/<\/*font.*?>//g; # rip out font spans
@@ -4722,17 +4724,31 @@ sub fetch_ensembl {
 		
 	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
 	# Here, we scrape both genes and associated transcripts from the server:
-	while (m/Ensembl ([\w_].*?) gene ([\w\d]+) .*?:(.*?)<br \/>(.*?)<br \/>/mg) {
+	while (m/Ensembl ([\w_].*?) gene ([\w\d\.]+) .*?:(.*?),\sassoc.*?<br \/>(.*?)<br \/>/mg) {
 		my ($gene_id, $transcripts, $name) = ($2, $3, $4);
+		
+		# Parse transcripts
+		my @enst;		
+		# This fix should work for all Ensembl organisms (4 Oct 2008)
+		while ($transcripts =~ m/([\w\d\.]+)/g) {
+			push @enst, $1;
+		}
+		
+		### Old hacks for grabbing the Ensemble transcripts
+		# while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
+			# push @enst, $1;
+		# }
+		# # A hack - Drosophila uses different transcript definitions ...
+		# while ($transcripts =~ m/(CG\d+-RA)/g) {
+			# push @enst, $1;
+		# }
+		# # And different again for Anopheles
+		# while ($transcripts =~ m/(AGAP\d+-RA)/g) {
+			# push @enst, $1;
+		# }
+		
+		# Parse gene name
 		$name ||= "$gene_id: no description available";
-		my @enst;
-		while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
-			push @enst, $1;
-		}
-		# A hack - Drosophila uses different transcript definitions ...
-		while ($transcripts =~ m/(CG\d+-RA)/g) {
-			push @enst, $1;
-		}
 		$name =~ s/\<.*?\>//g;
 		push @gene_names, $name;
 		$ids{$name}=[$gene_id, @enst];
@@ -4814,7 +4830,7 @@ sub fetch_ensembl {
 			
 	unless ($gene_id) {
 		# no matches
-		if (/Your query found no matches/si) {
+		if (/Your query matched no entries/si) {
 			dialogue("Your query matched no entries in the search database");
 		} elsif ($_ eq " ") {
 			# returned if response->is_error below
@@ -4831,7 +4847,7 @@ sub fetch_ensembl {
 	
 	if ($page eq 'qpcr') {
 		# retrieve both gene and transcript sequences - retrieval type is ignored
-		$_ = http_get(convert_ensembl($ensembl_organism,$transcript,'genomic'));
+		$_ = http_get(convert_ensembl($ensembl_organism,$transcript,'genomic','Location'));
 		$packed_widgets{qdna_seq}->delete(0.1,"end");
 		$packed_widgets{qdna_seq}->insert(0.1,$_);
 				
@@ -4865,8 +4881,11 @@ sub fetch_ensembl {
 
 sub convert_ensembl {
 	# argument to http address converter
-	my ($ensembl_organism,$transcript,$ensembl_type) = @_;
-	my $address = "http://www.ensembl.org/$ensembl_organism/exportview?seq_region_name=&type1=transcript&anchor1=$transcript&type2=bp&anchor2=&downstream=&upstream=&format=fasta&action=export&_format=Text&options=$ensembl_type&output=txt";
+	my ($ensembl_organism,$transcript,$ensembl_type,$export_type) = @_;
+	$export_type||='Transcript';
+	# my $address = "http://www.ensembl.org/$ensembl_organism/exportview?seq_region_name=&type1=transcript&anchor1=$transcript&type2=bp&anchor2=&downstream=&upstream=&format=fasta&action=export&_format=Text&options=$ensembl_type&output=txt";
+	my $address = "http://www.ensembl.org/$ensembl_organism/$export_type/Export/fasta?db=core;t=$transcript;st=$ensembl_type;_format=Text";
+	# print "Address is\n$address\n\n";
 	return $address;
 }
 
@@ -5270,7 +5289,7 @@ sub info {
 	
 	my $text = <<EOT;
 PerlPrimer v$version
-Copyright © 2003-2006 Owen Marshall\n
+Copyright © 2003-2008 Owen Marshall\n
 EOT
 	my $text2 = <<EOT;
 An application to design primers for PCR, Bisulphite PCR, Real-time PCR and Sequencing.

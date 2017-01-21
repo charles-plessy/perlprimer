@@ -1,3 +1,10 @@
+10/12/08  (PerlPrimer-1.1.16)
+- Fixed general compatibility with Ensembl database
+- New fix for Ensembl transcripts recognition -- should find transcripts from all Ensembl databases
+
+31/08/07  (PerlPrimer-1.1.15)
+- Ensembl compatibility restored for Arabidopsis genes
+
 18/10/06  (PerlPrimer-1.1.14)
 - Ensembl compatibility restored once again (slight change in the searchview output was causing problems)
 

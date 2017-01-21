@@ -1,14 +1,11 @@
 For v1.2
 
-*  Blast search dialogue should include a list of sequences that match both the forward and reverse primers
+*  Use an in vitro PCR server rather than straight BLAST for checking primers.  MFEPrimer (http://biocompute.bmi.ac.cn/MFEprimer/) looks a good candidate.
 
 *  More intelligent sequencing primer design - search for primers around the midpoint between minimum and maximum distances, and then gradually move out
 
-*  More complex primer-dimer routines - including detection of hair-pins and unequal primer-dimer internal loops
+*  More complex primer-dimer routines - including detection of unequal primer-dimer internal loops
+
+*  More emphasis on RealTime PCR design?  Show primers on intron/exon map, for example?
 
 *  Ability to designate regions with starting/ending coordinates or starting/ending sequence strings, and assign colours and PCR ranges to such regions
-
-
-Post v1.2
-
-*  Methylation specific PCR?
