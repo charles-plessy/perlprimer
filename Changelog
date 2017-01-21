@@ -1,5 +1,10 @@
+5/6/06  (PerlPrimer-1.1.12)
+- Retrieval of un-annotated genes from Ensembl (using the Ensembl Gene ID) is now possible
+- BLAST search results compatibility restored
+- ORF calculation re-written to allow for transciption initiation from TTG, GTG and CTG codons, in the absence of an initiating ATG.
+
 31/5/06  (PerlPrimer-1.1.11)
-- Ensembl compatibility restored yet again (Ensembl now apparently back to using a modiefied text view rather than searchview)
+- Ensembl compatibility restored yet again (Ensembl now apparently back to using a modified text view rather than searchview)
 - Better error notification if the Ensembl format changes yet again
 - Fixed a small bug related to finding the GCG restriction enzyme file in the user's home directory
 

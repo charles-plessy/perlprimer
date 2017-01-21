@@ -3,7 +3,7 @@
 # PerlPrimer
 # Designs primers for PCR, Bisulphite PCR, QPCR (Realtime), and Sequencing
 
-# version 1.1.11 (31/5/2006)
+# version 1.1.12 (5/6/2006)
 # Copyright © 2003-2006, Owen Marshall
 
 # This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ use strict;
 
 my ($version, $commandline, $win_exe);
 BEGIN {
-	$version = "1.1.11";
+	$version = "1.1.12";
 	$win_exe = 0;
 	
 	($commandline) = @ARGV;
@@ -3564,7 +3564,7 @@ sub blast_primers {
 		for my $i (0 .. $#$blast_summary_ref) {
 			$_ = $$blast_summary_ref[$i];
 			next unless /$search_string/;
-			if (m/^(\w*\|[\w\|\.\d]+)(.*?)(\d+\s+[\d\.\w\-]+\s*$)/) {
+			if (m/^(\w*\|[\w\|\.\d]+)(.*?)([\d\.]+\s+[\d\.\w\-]+\s*$)/) {
 				$packed_widgets{'blast_text'}->insert('end', $1);
 				$packed_widgets{'blast_text'}->insert('end', $2, 'blue');
 				$packed_widgets{'blast_text'}->insert('end', $3."\n");
@@ -4522,7 +4522,7 @@ sub blast {
 				
 		# send off the query
 		$_ = http_get($blast_put);
-	
+			
 		# abort if unsuccessfull
 		return if $_ eq " ";
 	
@@ -4546,6 +4546,7 @@ sub blast {
 		# Having asked for text output, blast still provides some HTML formatting!
 		s/\<!\-\-.*\-\-\>//sg;
 		s/\<[\w\\]*\>//g;
+		s/<a href=".*?ALT="New">&nbsp;&nbsp;//g;
 	} else {
 		# local BLAST server
 		# need to save the primer sequence to a temp file for input to local BLAST
@@ -4562,7 +4563,7 @@ sub blast {
 		# delete tmp file
 		unlink "$tmp.primer_tmp";
 	}
-			
+	
 	# OK, let's try something really nifty ... let's pull each entry out:
 	my $blast_out = $_;
 	undef(@blast_results_1);
@@ -4577,7 +4578,7 @@ sub blast {
 	# search for each sequence identifier and find corresponding blast entry
 	while (m/^(\w*\|[\w\|\.\d]+)/mg) {
 			my $found_result = $1;
-			if ($blast_out =~ /\n\>(\Q$found_result\E.*?Length = \d*)[\n\s]*(Score = .*?Strand = \w* \/ \w*)[\n\s]*(Query.*?Sbjct.*?)\n/s) {
+			if ($blast_out =~ /\n\>(\Q$found_result\E.*?Length\s*?=\s*?\d*)[\n\s]*(Score\s*?=.*?Strand\s*?=\s*?\w*\s*?\/\s*?\w*)[\n\s]*(Query.*?Sbjct.*?)\n/s) {
 				push @blast_results_1, $1;
 				push @blast_results_2, $2;
 				push @blast_results_3, $3;
@@ -4693,8 +4694,9 @@ sub fetch_ensembl {
 		
 	# as of 07/2005, we're actually looking for the transcript ID, not the gene ID ...
 	# Here, we scrape both genes and associated transcripts from the server:
-	while (m/Ensembl gene ([\w\d]+) .*?:(.*?)\<br \/\>(.*?)\]/mg) {
+	while (m/Ensembl gene ([\w\d]+) .*?:(.*?)<br \/>(.*?)<br \/>/mg) {
 		my ($gene_id, $transcripts, $name) = ($1, $2, $3);
+		$name ||= "$gene_id: no description available";
 		my @enst;
 		while ($transcripts =~ m/(ENS[A-Z]*T\d+)/g) {
 			push @enst, $1;
@@ -5240,7 +5242,7 @@ sub info {
 	
 	my $text = <<EOT;
 PerlPrimer v$version
-Copyright © 2003-2005 Owen Marshall\n
+Copyright © 2003-2006 Owen Marshall\n
 EOT
 	my $text2 = <<EOT;
 An application to design primers for PCR, Bisulphite PCR, Real-time PCR and Sequencing.
@@ -5883,7 +5885,8 @@ sub find_orf {
 	my $seq = $_;
 	for my $i (0 .. 2) {
 		$orf[$i][0] = 0;
-		my $met_init = 0;
+		my $init;
+		my $met_init;
 		my $orf_count = 0;
 		my $orf_start = -1;
 		my $j;
@@ -5892,10 +5895,23 @@ sub find_orf {
 			my $aa = $genetic_code{$codon};
 			$aa ||= "X";
 			unless ($aa eq "*") {
-				# only take ORF from initiating Met codon
-				next if ($aa ne "M") && ($met_init==0);
-				$met_init=1;
-				$orf_start = $j if $orf_start==-1;
+				# only take ORF from initiating Met codon or rare alternatives
+				unless ($init) {
+					if ($codon =~ m/[ATGC]TG/) {
+						$init=1;
+						$orf_start = $j;
+					} else {
+						next;
+					}
+				}
+				
+				# prefer initiation from downstream ATG if it exists ...
+				if (!$met_init && ($aa eq 'M')) {
+					$met_init=1;
+					$orf_start = $j;
+					$orf_count = 0;
+				}
+				
 				$orf_count++;
 				next;
 			}
@@ -5908,7 +5924,7 @@ sub find_orf {
 				# frame
 				$orf[$i][3]=$i;
 			}
-			$orf_count=$met_init=0;
+			$orf_count=$met_init=$init=0;
 			$orf_start=-1;
 		}
 		if ($orf_count > $orf[$i][0]) {
@@ -5925,8 +5941,8 @@ sub find_orf {
 	# sort by orf length:
 	@orf = sort {@$b[0] <=> @$a[0]} @orf;
 	
-	return unless $orf[0] > 1;
-		
+	return unless $orf[0][0] > 1;
+			
 	# Recreate DNA sequence based on ORF
 	my $dna3 ="";
 	my $dna1 = substr($seq, 0, $orf[0][1]);
